@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   TOMBSTONE_DAYS, OLD_DAYS, QUICK_MAX, QUICK_LEN,
-  wins, pickNewest, pruneTombstones, mergeBoards, dayKey, isOld, oldCutoff, quickTarget, quickLines, carryOver,
+  wins, pickNewest, pruneTombstones, mergeBoards, dayKey, isOld, oldCutoff, quickTarget, quickLines, carryOver, pencilMoves,
 } from "../../app/core.js";
 
 const DAY = 864e5;
@@ -148,4 +148,42 @@ test("carryOver: unfinished Tomorrow todos from before midnight go to the end of
   const moves = carryOver(todos, "now", "tom", midnight);
   assert.deepEqual(moves.map((m) => [m.todo.id, m.order]), [["t1", 4], ["t2", 5]]);
   assert.deepEqual(carryOver(todos, "empty", "tom", midnight).map((m) => m.order), [1, 2]);
+});
+
+test("carryOver: steps come along under their todo and keep their order", () => {
+  const todos = [
+    { id: "p", listId: "tom", order: 1, updatedAt: 1 },
+    { id: "s2", listId: "tom", order: 2, parentId: "p", updatedAt: 5000 }, // checked this morning
+    { id: "s1", listId: "tom", order: 1, parentId: "p", updatedAt: 1 },
+    { id: "q", listId: "tom", order: 2, updatedAt: 1 },
+    { id: "lost", listId: "tom", order: 3, parentId: "gone", updatedAt: 1 }, // its todo was deleted
+    { id: "n1", listId: "now", order: 2, updatedAt: 1 },
+    { id: "n1s", listId: "now", order: 9, parentId: "n1", updatedAt: 1 }, // a step's order doesn't count
+  ];
+  const moves = carryOver(todos, "now", "tom", 1000);
+  assert.deepEqual(moves.map((m) => [m.todo.id, m.order]), [["p", 3], ["s1", 1], ["s2", 2], ["q", 4], ["lost", 5]]);
+});
+
+test("pencilMoves: Tomorrow the day before, Now on the day, catching up on missed days", () => {
+  const todos = [
+    { id: "n1", listId: "now", order: 1 },
+    { id: "t1", listId: "tom", order: 1 },
+    { id: "wed", listId: "later", order: 1, pencil: "2026-11-11" },
+    { id: "thu", listId: "later", order: 2, pencil: "2026-11-12" },
+    { id: "thuStep", listId: "later", order: 1, parentId: "thu" },
+    { id: "past", listId: "trip", order: 1, pencil: "2026-11-02" },
+    { id: "plain", listId: "later", order: 3 },
+    { id: "shared", listId: "sh", order: 1, pencil: "2026-11-10" },
+    { id: "gone", listId: "later", order: 4, pencil: "2026-11-10", deleted: true },
+    { id: "stepDated", listId: "later", order: 2, parentId: "thu", pencil: "2026-11-10" }, // steps follow their todo
+  ];
+  const opts = { nowId: "now", tomId: "tom", today: "2026-11-11", tomorrow: "2026-11-12", carry: true, skip: new Set(["sh"]) };
+  const got = pencilMoves(todos, opts).map((m) => [m.todo.id, m.listId, m.order]);
+  assert.deepEqual(got, [["past", "now", 2], ["wed", "now", 3], ["thu", "tom", 2], ["thuStep", "tom", 1], ["stepDated", "tom", 2]]);
+  // Without the carry, tomorrow's todo waits for its day.
+  assert.deepEqual(pencilMoves(todos, { ...opts, carry: false }).map((m) => m.todo.id), ["past", "wed"]);
+  // Without a Tomorrow list, the same.
+  assert.deepEqual(pencilMoves(todos, { ...opts, tomId: undefined }).map((m) => m.todo.id), ["past", "wed"]);
+  // Nothing moves without a Now list.
+  assert.deepEqual(pencilMoves(todos, { ...opts, nowId: undefined }), []);
 });

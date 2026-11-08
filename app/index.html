@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <!-- Only this site's own scripts (and the theme line below, by its hash) run, and images and
        fonts load only from here and Google Fonts. Sync can talk to any https address. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-KDLNOaM82cb5CLFroEg340OseYTqlfehKiLytdTwKYo='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-BJj+K9sKS70Nwqtm4n77TQc5rtRL3SyR9KbFGevlYcw='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
   <meta name="referrer" content="same-origin">
   <title>Now or Later</title>
   <meta name="description" content="A notebook-style todo list: Now, Tomorrow, Later and Done.">
@@ -23,10 +23,10 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&family=Kalam:wght@400&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&family=Kalam:wght@400&family=Patrick+Hand&display=swap">
   <link rel="stylesheet" href="styles.css?v=__BUILD_NUMBER__">
   <!-- Apply a Light/Dark choice from Settings before first paint, so there's no flash. -->
-  <script>try{var t=(JSON.parse(localStorage.getItem("nat.local.v1"))||{}).theme;if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+  <script>try{var o=JSON.parse(localStorage.getItem("nat.local.v1"))||{},d=document.documentElement.dataset;if(o.theme==="light"||o.theme==="dark")d.theme=o.theme;if(o.font==="neat"||o.font==="print")d.font=o.font;if(o.colors==="bold")d.colors="bold"}catch(e){}</script>
 </head>
 <body>
   <header class="top">
@@ -86,6 +86,21 @@
                 <label><input type="radio" name="theme" value="system"> System</label>
                 <label><input type="radio" name="theme" value="light"> Light</label>
                 <label><input type="radio" name="theme" value="dark"> Dark</label>
+              </div>
+            </div>
+            <div class="item stack">
+              <span class="item-text" id="fontLabel">Todo writing <small>Like picking a pen. It changes how todos look, not list names.</small></span>
+              <div class="choice" role="radiogroup" aria-labelledby="fontLabel">
+                <label class="font-hand"><input type="radio" name="font" value="hand"> Handwriting</label>
+                <label class="font-neat"><input type="radio" name="font" value="neat"> Neat hand</label>
+                <label class="font-print"><input type="radio" name="font" value="print"> Print</label>
+              </div>
+            </div>
+            <div class="item stack">
+              <span class="item-text" id="colorsLabel">List colors <small>Bold makes each list's color stronger around the page.</small></span>
+              <div class="choice" role="radiogroup" aria-labelledby="colorsLabel">
+                <label><input type="radio" name="colors" value="soft"> Soft</label>
+                <label><input type="radio" name="colors" value="bold"> Bold</label>
               </div>
             </div>
           </div>

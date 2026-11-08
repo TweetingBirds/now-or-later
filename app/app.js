@@ -9,7 +9,7 @@
 
   // APP_VERSION is bumped by hand for notable releases. The BUILD_* values are
   // stamped by the GitHub Pages workflow on every deploy (left as-is locally).
-  const APP_VERSION = "1.26.0";
+  const APP_VERSION = "1.27.0";
   const BUILD_NUMBER = "__BUILD_NUMBER__";
   const BUILD_SHA = "__BUILD_SHA__";
   const BUILD_DATE = "__BUILD_DATE__";
@@ -30,6 +30,9 @@
   const PALETTE = ["#f2b84b", "#7b9cff", "#9b8cf0", "#5cc6a7", "#f28b82", "#f6a6cf", "#8ecae6", "#b5d16b", "#c9a27e", "#ff9f5a", "#7fd1d8", "#a3a9b5"];
   // What a screen reader says for each swatch.
   const COLOR_NAMES = ["Marigold", "Blue", "Lavender", "Mint", "Coral", "Pink", "Sky", "Lime", "Tan", "Orange", "Teal", "Gray"];
+  // Deeper colors, only in the color menu (new lists still start from PALETTE).
+  const DEEP = ["#2f5bd3", "#7d4fb3", "#c2417a", "#c4622d", "#3f8f5a", "#1f8a8a"];
+  const DEEP_NAMES = ["Ballpoint", "Plum", "Berry", "Rust", "Forest", "Ocean"];
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
   // Every edit is stamped, and the newest stamp wins when devices disagree, so a
   // device whose clock is off would win (or lose) edits it shouldn't. Stamps use the
@@ -63,7 +66,7 @@
     }
   };
 
-  let local = Object.assign({ lastDay: null, syncUrl: "", syncToken: "", pristine: false, synced: false, board: "", boardName: "", boardKind: "", admin: false, switching: false, otherBoard: "", theme: "system", keysAlt: false, sentAt: 0 }, read(LOCAL_KEY) || {});
+  let local = Object.assign({ lastDay: null, syncUrl: "", syncToken: "", pristine: false, synced: false, board: "", boardName: "", boardKind: "", admin: false, switching: false, otherBoard: "", theme: "system", font: "hand", colors: "soft", keysAlt: false, sentAt: 0 }, read(LOCAL_KEY) || {});
   const looksLikeBoard = (b) => !!b && typeof b === "object" && Array.isArray(b.lists) && Array.isArray(b.todos);
   let board = read(BOARD_KEY);
   let recovered = "";
@@ -127,7 +130,21 @@
   const lists = () => board.lists.filter(l => !l.deleted && !l.archived).sort((a, b) => a.order - b.order);
   const listById = (id) => board.lists.find(l => l.id === id && !l.deleted && !l.archived);
   const finishedLists = () => board.lists.filter(l => !l.deleted && l.archived).sort((a, b) => (b.archivedDay || "").localeCompare(a.archivedDay || "") || (b.updatedAt - a.updatedAt));
-  const todosIn = (listId) => board.todos.filter(t => !t.deleted && !t.archived && t.listId === listId).sort((a, b) => a.order - b.order);
+  // todosIn is a list's todos, without steps (see stepsOf).
+  const todosIn = (listId) => board.todos.filter(t => !t.deleted && !t.archived && t.listId === listId && !isStep(t)).sort((a, b) => a.order - b.order);
+  // Steps: a todo with a parentId sits under that todo, one level deep, on the same
+  // list (see core.js). Each step is its own todo, so sync merges them one by one.
+  // A step whose todo isn't there (deleted on another device, say) is shown as an
+  // ordinary todo.
+  const parentOf = (t) => {
+    if (!t.parentId) return null;
+    const p = board.todos.find(x => x.id === t.parentId);
+    return p && !p.deleted && !p.parentId && !!p.archived === !!t.archived && p.listId === t.listId ? p : null;
+  };
+  const isStep = (t) => !!parentOf(t);
+  const stepsOf = (p) => p.parentId ? [] : board.todos.filter(t => t.parentId === p.id && !t.deleted && !!t.archived === !!p.archived && t.listId === p.listId).sort((a, b) => a.order - b.order);
+  // A todo and its steps: what moves, gets deleted or is undone together.
+  const family = (t) => [t, ...stepsOf(t)];
   const archived = () => board.todos.filter(t => !t.deleted && t.archived).sort((a, b) => (b.archivedDay || "").localeCompare(a.archivedDay || "") || (b.updatedAt - a.updatedAt));
   const touch = (o, fields) => Object.assign(o, fields, { updatedAt: now() });
 
@@ -155,9 +172,12 @@
     return dates;
   }
 
+  // Steps go to Done with their todo, on the same day.
   function archive(t) {
-    const l = listById(t.listId);
-    touch(t, { archived: true, archivedDay: t.doneDay || todayKey(), fromName: l ? l.name : "", fromColor: l ? safeColor(l.color) : DEFAULT_COLOR });
+    const l = listById(t.listId), kids = stepsOf(t);
+    const fields = { archived: true, archivedDay: t.doneDay || todayKey(), fromName: l ? l.name : "", fromColor: l ? safeColor(l.color) : DEFAULT_COLOR };
+    touch(t, fields);
+    kids.forEach(k => touch(k, fields));
   }
 
   // ---------- older Done ----------
@@ -241,7 +261,8 @@
     const today = todayKey();
     let moved = 0;
     for (const t of board.todos) {
-      if (!t.deleted && !t.archived && t.done && (board.settings.doneNow || (t.doneDay && t.doneDay < today))) { archive(t); moved++; }
+      // A checked step waits for its todo.
+      if (!t.deleted && !t.archived && t.done && (board.settings.doneNow || (t.doneDay && t.doneDay < today)) && !isStep(t)) { archive(t); moved++; }
     }
     return moved;
   }
@@ -265,8 +286,22 @@
         for (const { todo, order } of core.carryOver(board.todos, nowL.id, tomL.id, midnight.getTime() + (Number(local.clockOffset) || 0))) touch(todo, { listId: nowL.id, order });
       }
     }
+    pencilNow();
     local.lastDay = today; write(LOCAL_KEY, local);
     return moved;
+  }
+
+  // "Pencil in for…": a todo on Later (or another of your own lists) with a day on
+  // it moves to Tomorrow the morning before, or to Now on the day (core.pencilMoves).
+  // Once it's on Now or Tomorrow the date comes off: it's just a todo again.
+  const pencilKey = (d) => { const x = dayDate(); x.setDate(x.getDate() + d); return keyOf(x); };
+  const canPencil = (t, l = listById(t.listId)) => !!l && !l.shared && l.role !== "now" && l.role !== "tomorrow" && !isStep(t);
+  function pencilNow() {
+    const nowL = lists().find(l => l.role === "now"), tomL = lists().find(l => l.role === "tomorrow");
+    const moves = core.pencilMoves(board.todos, { nowId: nowL?.id, tomId: tomL?.id, today: todayKey(), tomorrow: pencilKey(1),
+      carry: !!board.settings.carry, skip: new Set(board.lists.filter(l => l.shared).map(l => l.id)) });
+    for (const { todo, listId, order } of moves) touch(todo, { listId, order, pencil: null });
+    return moves;
   }
 
   // ---------- persistence + sync ----------
@@ -623,7 +658,7 @@
   document.addEventListener("pointerup", () => setTimeout(() => { if (viewStale) renderWhenFree(); }, 0));
   function isBusyEditing() {
     const a = document.activeElement;
-    return drag || (a && (a.isContentEditable || (a.tagName === "INPUT" && (a.type === "text" || a.type === "search")) || a.classList?.contains("col-title")));
+    return drag || listDrag || (a && (a.isContentEditable || (a.tagName === "INPUT" && (a.type === "text" || a.type === "search")) || a.classList?.contains("col-title")));
   }
 
   // ---------- rendering ----------
@@ -722,6 +757,8 @@
     // The name is an input you can edit, so screen readers get a plain heading too.
     head.append(...[
       el("h2", { class: "sr-only", id: "h-" + list.id }, `${list.name}${dateText ? ", " + dateText : ""}, ${open} to do`),
+      // Lists drag by this grip; keyboards and screen readers use Move list left/right in the ••• menu.
+      el("button", { class: "grip list-grip", title: "Drag to move this list", tabindex: "-1", "aria-hidden": "true", onpointerdown: e => startListDrag(e, list, col) }, "⋮⋮"),
       el("button", { class: "swatch-btn", id: "color-" + list.id, title: "Change color", "aria-label": `Change ${list.name} color`, "data-pop-trigger": true, onclick: e => colorPop(e, list, head) }),
       el("input", {
         class: "col-title", value: list.name, "aria-label": "List name", maxlength: 30, id: "name-" + list.id,
@@ -734,7 +771,12 @@
     ].filter(Boolean));
     const body = el("div", { class: "col-body", "data-drop": list.id });
     if (!todos.length) body.append(el("div", { class: "empty" }, list.role === "later" ? "Someday things go here." : "Nothing here yet."));
-    todos.forEach(t => body.append(renderTodo(t)));
+    for (const t of todos) {
+      const kids = stepsOf(t);
+      body.append(renderTodo(t, kids));
+      kids.forEach(k => body.append(renderTodo(k, null, t)));
+      if ((kids.length && !t.done) || stepFor === t.id) body.append(addStepRow(t));
+    }
     const input = el("input", { type: "text", placeholder: `Add to ${list.name}…`, "aria-label": `Add to ${list.name}`, id: "add-" + list.id, enterkeyhint: "done" });
     const form = el("form", { class: "add", onsubmit: e => {
       e.preventDefault(); const v = input.value.trim(); if (!v) return;
@@ -751,40 +793,136 @@
     return col;
   }
 
-  function renderTodo(t) {
-    const row = el("div", { class: "todo" + (t.done ? " done" : "") + (unsyncedIds.has(t.id) ? " unsynced" : ""), "data-id": t.id });
-    const text = el("div", { class: "text", ondblclick: () => editText(text, t) }, t.text);
-    row.append(
+  // A todo's row. `kids` are its steps (for the "1 of 3" count); `parent` is set
+  // when the row is itself a step.
+  function renderTodo(t, kids, parent) {
+    const hit = tagOn && (hasTag(t.text, tagOn) || (kids || []).some(k => hasTag(k.text, tagOn)) || (parent && hasTag(parent.text, tagOn)));
+    const row = el("div", { class: "todo" + (t.done ? " done" : "") + (parent ? " step" : "") + (kids && kids.length ? " parent" : "") + (unsyncedIds.has(t.id) ? " unsynced" : "") + (tagOn ? (hit ? " tag-hit" : " tag-dim") : ""),
+      "data-id": t.id, ...(parent ? { "data-parent": parent.id } : {}) });
+    const text = el("div", { class: "text", ondblclick: () => editText(text, t) }, richText(t.text));
+    const pencil = !parent && typeof t.pencil === "string" ? el("span", { class: "pencil", title: `Penciled in for ${pretty(t.pencil)}` }, pretty(t.pencil, { weekday: "short", month: "short", day: "numeric" })) : null;
+    const done = kids && kids.length ? kids.filter(k => k.done).length : 0;
+    row.append(...[
       // Dragging needs a pointer; keyboards and screen readers move todos from the ••• menu.
-      el("button", { class: "grip", title: "Drag to move", tabindex: "-1", "aria-hidden": "true", onpointerdown: e => startDrag(e, t, row) }, "⋮⋮"),
+      el("button", { class: "grip", title: parent ? "Drag out to make it its own todo" : "Drag to move", tabindex: "-1", "aria-hidden": "true", onpointerdown: e => startDrag(e, t, row) }, "⋮⋮"),
       // The label around the box is the 44-point tap target; the box stays small.
-      el("label", { class: "check-hit" }, el("input", { type: "checkbox", class: "check", checked: t.done, "aria-label": t.text, onchange: e => {
-        const checked = e.target.checked;
-        const list = listById(t.listId);
-        let finished = false;
-        const undo = undoable([t], () => {
-          touch(t, { done: checked, doneDay: checked ? todayKey() : null });
-          // Read before Done-right-away moves this todo out of the list.
-          finished = checked && !!list && todosIn(list.id).every(x => x.done);
-          // The last todo on one of your own lists: offer to archive it, not on the
-          // notebook's pages. Checked todos stay put a moment so the offer can be taken.
-          if (checked && board.settings.doneNow && !(list && canArchive(list))) archive(t);
-          commit();
-        });
-        // Only your own tap on the last box celebrates, never a sync or a reload.
-        if (finished) confetti(e.target);
-        if (checked && list && canArchive(list)) {
-          toast(`Everything on ${list.name} is done.`, undo, { label: "Archive list", run: () => archiveNow(list) });
-        } else if (checked) toast(board.settings.doneNow ? "Nice. Moved to Done." : "Nice. It moves to Done tomorrow morning.", undo);
-      } })),
-      text,
+      el("label", { class: "check-hit" }, el("input", { type: "checkbox", class: "check", checked: t.done, "aria-label": parent ? `${t.text}, a step of ${parent.text}` : t.text, onchange: e => checkTodo(t, e.target.checked, e.target) })),
+      // The date it's penciled in for and the steps count sit on a small line under the text.
+      pencil || (kids && kids.length) ? el("div", { class: "todo-main" }, text, el("div", { class: "todo-meta" },
+        pencil, kids && kids.length ? el("span", { class: "prog", title: `${done} of ${kids.length} steps checked` }, `${done} of ${kids.length} steps`) : null)) : text,
       el("span", { class: "unsynced-dot", title: "Not synced yet", "aria-label": "Not synced yet" }),
       el("button", { class: "icon-btn more", id: "more-" + t.id, "aria-label": `Options for “${t.text}”`, "aria-haspopup": "menu", "aria-expanded": "false", "data-pop-trigger": true, onclick: e => todoPop(e, t, row, text) }, "•••"),
-    );
+    ].filter(Boolean));
     return row;
   }
 
+  // Checking a box. A todo's steps follow it; checking a todo's last step checks
+  // the todo, and unchecking a step unchecks it.
+  function checkTodo(t, checked, box) {
+    const parent = parentOf(t);
+    const top = parent || t;
+    const list = listById(t.listId);
+    let finished = false, topDone = false;
+    const undo = undoable(family(top), () => {
+      const day = checked ? todayKey() : null;
+      touch(t, { done: checked, doneDay: day });
+      if (!parent) stepsOf(t).forEach(k => { if (!!k.done !== checked) touch(k, { done: checked, doneDay: day }); });
+      else if (checked && !parent.done && stepsOf(parent).every(k => k.done)) touch(parent, { done: true, doneDay: day });
+      else if (!checked && parent.done) touch(parent, { done: false, doneDay: null });
+      topDone = checked && top.done;
+      // Read before Done-right-away moves this todo out of the list.
+      finished = topDone && !!list && todosIn(list.id).every(x => x.done);
+      // The last todo on one of your own lists: offer to archive it, not on the
+      // notebook's pages. Checked todos stay put a moment so the offer can be taken.
+      if (topDone && board.settings.doneNow && !(list && canArchive(list))) archive(top);
+      commit();
+    });
+    // Only your own tap on the last box celebrates, never a sync or a reload.
+    if (finished) confetti(box);
+    if (topDone && list && canArchive(list)) {
+      toast(`Everything on ${list.name} is done.`, undo, { label: "Archive list", run: () => archiveNow(list) });
+    } else if (topDone) toast(board.settings.doneNow ? "Nice. Moved to Done." : "Nice. It moves to Done tomorrow morning.", undo);
+  }
+
+  // The "+ add a step" line under a todo with steps (or one just given its first).
+  let stepFor = null; // a todo whose add-a-step line shows before it has any steps
+  function addStepRow(p) {
+    const input = el("input", { type: "text", class: "step-input", id: "add-step-" + p.id, placeholder: "+ add a step", "aria-label": `Add a step to ${p.text}`, enterkeyhint: "done",
+      onkeydown: e => { if (e.key === "Escape") { e.stopPropagation(); input.value = ""; input.blur(); } },
+      onblur: () => { if (stepFor === p.id && !input.value.trim()) setTimeout(() => { if (stepFor === p.id && document.activeElement !== input) { stepFor = null; render(); } }, 0); } });
+    return el("form", { class: "todo addstep", "data-parent": p.id, onsubmit: e => {
+      e.preventDefault(); const v = input.value.trim(); if (!v) return;
+      const kids = stepsOf(p);
+      board.todos.push({ id: uid(), text: v, listId: p.listId, parentId: p.id, order: Math.max(0, ...kids.map(k => k.order)) + 1, done: false, doneDay: null, archived: false, updatedAt: now() });
+      // A new step means the todo isn't finished after all.
+      if (p.done) touch(p, { done: false, doneDay: null });
+      stepFor = p.id;
+      commit();
+    } }, input);
+  }
+
+  // Todo text with web addresses as links and #words as tags. Built from text
+  // nodes and elements, never innerHTML.
+  const RICH = /(https?:\/\/[^\s<>"]+)|(^|[\s(])#([\p{L}\p{N}][\p{L}\p{N}_-]{0,29})/gu;
+  const tagKey = (name) => name.toLowerCase();
+  const hasTag = (text, key) => { for (const m of String(text || "").matchAll(RICH)) if (m[3] && tagKey(m[3]) === key) return true; return false; };
+  // Each tag gets the same color everywhere, from the list palette (gray left out).
+  function tagColor(key) {
+    let h = 0; for (const c of key) h = (h * 31 + c.codePointAt(0)) >>> 0;
+    return PALETTE[h % (PALETTE.length - 1)];
+  }
+  function linkLabel(url) {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.replace(/^www\./, "");
+      return host + (u.pathname.length > 1 || u.search || u.hash ? "/…" : "");
+    } catch (e) { return url; }
+  }
+  function richText(text) {
+    text = String(text || "");
+    const out = []; let at = 0;
+    for (const m of text.matchAll(RICH)) {
+      let start = m.index, end = m.index + m[0].length;
+      if (m[1]) {
+        // Trailing punctuation belongs to the sentence, not the address.
+        let url = m[1];
+        while (/[.,;:!?)\]'"]$/.test(url) && !(url.endsWith(")") && url.includes("("))) url = url.slice(0, -1);
+        end = start + url.length;
+        if (start > at) out.push(text.slice(at, start));
+        out.push(el("a", { class: "link", href: url, target: "_blank", rel: "noopener noreferrer", title: url, onclick: e => e.stopPropagation(), ondblclick: e => e.stopPropagation() }, linkLabel(url)));
+      } else {
+        start += m[2].length;
+        const key = tagKey(m[3]);
+        if (start > at) out.push(text.slice(at, start));
+        out.push(el("button", { type: "button", class: "tagmark", style: `--t:${tagColor(key)}`, "aria-pressed": String(tagOn === key),
+          title: tagOn === key ? "Stop highlighting" : `Highlight every #${m[3]}`, onclick: e => { e.stopPropagation(); showTag(tagOn === key ? null : key); }, ondblclick: e => e.stopPropagation() }, "#" + m[3]));
+      }
+      at = end;
+    }
+    if (at < text.length) out.push(text.slice(at));
+    return out;
+  }
+
+  // Tapping a #tag highlights every todo with it, on every list, until it's
+  // tapped again, Clear is pressed or Esc. It's just a view: nothing is saved.
+  let tagOn = null;
+  const tagBar = el("div", { class: "tag-bar", role: "status", hidden: true });
+  boardEl.before(tagBar);
+  function showTag(key) {
+    tagOn = key;
+    render();
+    if (!key) { tagBar.hidden = true; return; }
+    const n = board.todos.filter(t => !t.deleted && !t.archived && hasTag(t.text, key) && listById(t.listId)).length;
+    tagBar.replaceChildren(
+      el("span", {}, "Highlighting ", el("strong", { style: `--t:${tagColor(key)}`, class: "tagmark static" }, "#" + key), ` · ${n} todo${n === 1 ? "" : "s"}`),
+      el("button", { type: "button", class: "btn", onclick: () => showTag(null) }, "Clear"));
+    tagBar.hidden = false;
+  }
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && tagOn && !openPop && !document.querySelector("dialog[open]") && !isTyping(document.activeElement)) showTag(null); });
+
   function editText(node, t) {
+    // Links and tags go back to plain text while it's being edited.
+    node.textContent = t.text;
     node.contentEditable = "true"; node.focus();
     document.getSelection().selectAllChildren(node);
     const finish = () => { const v = node.textContent.trim(); node.contentEditable = "false"; if (v && v !== t.text) { touch(t, { text: v }); commit(); } else render(); };
@@ -832,14 +970,82 @@
   }
 
   function todoPop(e, t, row, text) {
+    const parent = parentOf(t);
+    const trigger = e.currentTarget;
+    const others = lists().filter(l => l.id !== t.listId);
+    // Opening a part of the menu makes it bigger, so it's placed again to stay on screen.
+    const reveal = (box) => { box.hidden = !box.hidden; placePop(row, trigger, "right"); box.querySelector("input, button")?.focus({ preventScroll: true }); };
+    const copyBox = el("div", { hidden: true }), pencilBox = el("div", { hidden: true });
+    const listButton = (l, run) => el("button", { class: "item", onclick: run }, el("span", { class: "dot", style: `background:${safeColor(l.color)}` }), l.name);
     popAt(row, e.currentTarget,
-      el("div", { class: "lbl" }, "Move to"),
-      lists().filter(l => l.id !== t.listId).map(l => el("button", { class: "item", onclick: () => { toast(`Moved to ${l.name}`, undoable([t], () => moveTodo(t, l.id, null))); } },
-        el("span", { class: "dot", style: `background:${safeColor(l.color)}` }), l.name)),
-      el("div", { class: "lbl" }, "This todo"),
+      parent ? null : el("div", { class: "lbl" }, "Move to"),
+      parent ? null : others.map(l => listButton(l, () => { toast(`Moved to ${l.name}`, undoable(family(t), () => moveTodo(t, l.id, null))); })),
+      el("div", { class: "lbl" }, parent ? "This step" : "This todo"),
       el("button", { class: "item", onclick: () => { closePop(); editText(text, t); } }, "Edit text"),
-      el("button", { class: "item danger", onclick: () => { toast("Deleted", undoable([t], () => { touch(t, { deleted: true }); commit(); })); } }, "Delete"),
+      parent ? null : el("button", { class: "item", onclick: () => { stepFor = t.id; closePop(); render(); document.getElementById("add-step-" + t.id)?.focus(); } }, stepsOf(t).length ? "Add a step" : "Add steps"),
+      parent ? null : el("button", { class: "item", onclick: () => { closePop(); toast("Duplicated", copyTodo(t, t.listId, t)); } }, "Duplicate"),
+      parent ? null : el("button", { class: "item", onclick: () => reveal(copyBox) }, "Copy to…"),
+      copyBox,
+      canPencil(t) ? el("button", { class: "item", onclick: () => reveal(pencilBox) }, typeof t.pencil === "string" ? "Change the date…" : "Pencil in for…") : null,
+      pencilBox,
+      parent ? el("button", { class: "item", onclick: () => { toast("It's its own todo now", undoable([t], () => moveTodo(t, t.listId, nextTopAfter(parent)))); } }, "Make it its own todo") : null,
+      el("button", { class: "item danger", onclick: () => { toast("Deleted", undoable(family(t), () => { family(t).forEach(x => touch(x, { deleted: true })); commit(); })); } }, "Delete"),
     );
+    copyBox.append(el("div", { class: "lbl" }, "Copy to"), ...lists().map(l => listButton(l, () => {
+      closePop();
+      const c = copyTodo(t, l.id, l.id === t.listId ? t : null);
+      toast(l.id === t.listId ? "Duplicated" : `Copied to ${l.name}`, c);
+    })));
+    if (canPencil(t)) {
+      const has = typeof t.pencil === "string";
+      const day = el("input", { type: "date", class: "pencil-date", id: "pencil-" + t.id, min: todayKey(), value: has ? t.pencil : pencilKey(2), "aria-label": "Day to pencil it in for" });
+      pencilBox.append(...[
+        el("div", { class: "lbl note" }, board.settings.carry ? "It moves to Tomorrow the day before, then into Now on the day." : "It moves into Now on the day."),
+        el("div", { class: "pencil-row" }, day, el("button", { class: "btn primary", type: "button", onclick: () => { if (day.value) pencilIn(t, day.value); } }, "Pencil in")),
+        has ? el("button", { class: "item", onclick: () => pencilIn(t, null) }, "Take the date off") : null].filter(Boolean));
+    }
+  }
+
+  // The first todo after `p` (and its steps) on p's list, so something can go right below it.
+  function nextTopAfter(p) {
+    const ts = todosIn(p.listId), i = ts.indexOf(p);
+    return i >= 0 && ts[i + 1] ? ts[i + 1].id : null;
+  }
+
+  // Duplicate and Copy to: a fresh, unchecked copy, steps and all. `after` puts it
+  // right below that todo; otherwise it goes at the end. Returns what Undo needs.
+  function copyTodo(t, listId, after) {
+    const list = listById(listId);
+    const fresh = [];
+    const undo = undoable([], () => {
+      const twin = { id: uid(), text: t.text, listId, order: 0, done: false, doneDay: null, archived: false, updatedAt: now() };
+      if (typeof t.pencil === "string" && list && canPencil(twin, list)) twin.pencil = t.pencil;
+      board.todos.push(twin); fresh.push(twin);
+      for (const k of stepsOf(t)) {
+        const step = { id: uid(), text: k.text, listId, parentId: twin.id, order: k.order, done: false, doneDay: null, archived: false, updatedAt: now() };
+        board.todos.push(step); fresh.push(step);
+      }
+      moveTodo(twin, listId, after ? nextTopAfter(after) : null);
+    });
+    // Undo of a copy deletes it: undo puts back each item's snapshot, so give it
+    // "deleted" snapshots of the new todos.
+    return undo.concat(fresh.map(x => ({ kind: "todos", id: x.id, snap: Object.assign(JSON.parse(JSON.stringify(x)), { deleted: true }), at: x.updatedAt })));
+  }
+
+  // Sets (or with null, clears) the day a todo is penciled in for. Today or
+  // tomorrow move it right away, the same way the morning would.
+  function pencilIn(t, day) {
+    closePop();
+    const undo = undoable(family(t), () => {
+      touch(t, { pencil: day || null });
+      pencilNow();
+      commit();
+    });
+    const l = listById(t.listId);
+    if (!day) toast("Date taken off", undo);
+    else if (l && l.role === "now") toast(`Moved to ${l.name}`, undo);
+    else if (l && l.role === "tomorrow") toast(`Moved to ${l.name}. It goes into Now in the morning.`, undo);
+    else toast(`Penciled in for ${pretty(day, { weekday: "short", month: "short", day: "numeric" })}`, undo);
   }
 
   function colorPop(e, list, head) {
@@ -848,8 +1054,8 @@
     const apply = c => { touch(list, { color: c }); commit(); };
     popAt(head, e.currentTarget,
       el("div", { class: "lbl" }, "Page color"),
-      el("div", { class: "swatches" }, PALETTE.map((c, i) => el("button", {
-        style: `background:${c}`, "aria-label": COLOR_NAMES[i], role: "menuitemradio", "aria-checked": String(c === list.color), onclick: () => apply(c),
+      el("div", { class: "swatches" }, [...PALETTE, ...DEEP].map((c, i) => el("button", {
+        style: `background:${c}`, "aria-label": [...COLOR_NAMES, ...DEEP_NAMES][i], role: "menuitemradio", "aria-checked": String(c === list.color), onclick: () => apply(c),
       }))),
       el("label", { class: "custom-color" },
         el("input", { type: "color", value: safeColor(list.color), oninput: ev => preview(ev.target.value), onchange: ev => apply(ev.target.value) }),
@@ -887,9 +1093,9 @@
     confirmBox.append(
       el("div", { class: "lbl" }, count ? `${count} todo${count > 1 ? "s" : ""} will move to ${fallback?.name}` : "This list is empty"),
       el("button", { class: "item danger", onclick: () => {
-        const undo = undoable([list, ...todosIn(list.id)], () => {
+        const undo = undoable([list, ...todosIn(list.id).flatMap(family)], () => {
           let o = Math.max(0, ...todosIn(fallback.id).map(t => t.order));
-          todosIn(list.id).forEach(t => touch(t, { listId: fallback.id, order: ++o }));
+          todosIn(list.id).forEach(t => { const kids = stepsOf(t); touch(t, { listId: fallback.id, order: ++o }); kids.forEach(k => touch(k, { listId: fallback.id })); });
           touch(list, { deleted: true });
           commit();
         });
@@ -940,7 +1146,7 @@
   function archiveNow(list) {
     closePop();
     if (!canArchive(list)) return;
-    const undo = undoable([list, ...todosIn(list.id)], () => { archiveList(list); commit(); });
+    const undo = undoable([list, ...todosIn(list.id).flatMap(family)], () => { archiveList(list); commit(); });
     toast(list.shared ? `${list.name} archived for everyone on it. It's in Done.` : `${list.name} archived. It's in Done.`, undo);
   }
   // Brings an archived list back to the board with every todo on it unchecked,
@@ -1343,7 +1549,12 @@
       const shelf = finishedShelf();
       if (shelf) body.append(shelf);
       let last = null;
+      // Steps show in small type under their todo when both are in view.
+      const shownIds = new Set(items.map(a => a.id));
+      const kidsOf = new Map();
+      for (const a of items) if (a.parentId && shownIds.has(a.parentId)) { if (!kidsOf.has(a.parentId)) kidsOf.set(a.parentId, []); kidsOf.get(a.parentId).push(a); }
       for (const a of items.slice(0, doneView.limit)) {
+        if (a.parentId && shownIds.has(a.parentId)) continue;
         if (a.archivedDay !== last) { last = a.archivedDay; body.append(el("div", { class: "day-label" }, a.archivedDay ? pretty(a.archivedDay, { weekday: "short", month: "short", day: "numeric" }) : "Earlier")); }
         const target = restoreTarget(a);
         body.append(el("div", { class: "todo done" },
@@ -1351,6 +1562,7 @@
           el("div", { class: "text" }, highlight(a.text)),
           el("button", { type: "button", class: "put-back", title: `Put back on ${target ? target.name : "a list"}`, "aria-label": `Put “${a.text}” back on ${target ? target.name : "a list"}`, onclick: () => restore(a) },
             el("span", { "aria-hidden": "true" }, "↩"), " ", target ? target.name : "")));
+        for (const k of (kidsOf.get(a.id) || []).sort((x, y) => (x.order || 0) - (y.order || 0))) body.append(el("div", { class: "todo done done-step" }, el("div", { class: "text" }, highlight(k.text))));
       }
       // Drawing thousands of rows on every edit is what made a full Done slow.
       const rest = items.length - doneView.limit;
@@ -1381,25 +1593,41 @@
   }
 
   // Puts a finished todo back, unchecked, at the bottom of the list it came from.
+  // Its steps come back with it, unchecked too.
   function restore(a) {
     const list = restoreTarget(a);
-    if (!board.todos.includes(a)) board.todos.push(a); // from older Done
+    if (!board.todos.includes(a)) {  // from older Done, steps and all
+      board.todos.push(a);
+      for (const k of olderDone()) if (k.parentId === a.id && !board.todos.includes(k)) board.todos.push(k);
+    }
+    const kids = a.parentId ? [] : board.todos.filter(k => k.parentId === a.id && !k.deleted && k.archived);
     const order = Math.max(0, ...todosIn(list.id).map(t => t.order)) + 1;
-    const undo = undoable([a], () => {
-      touch(a, { archived: false, archivedDay: null, done: false, doneDay: null, listId: list.id, order });
+    const undo = undoable([a, ...kids], () => {
+      const back = { archived: false, archivedDay: null, done: false, doneDay: null, listId: list.id };
+      touch(a, { ...back, order, ...(a.parentId ? { parentId: null } : {}) });
+      kids.forEach(k => touch(k, back));
       commit();
     });
     toast(`Put back on ${list.name}`, undo);
   }
 
   // ---------- moving & drag ----------
+  // Moves a todo, and its steps with it. A step moved this way (dragged out, or
+  // "Make it its own todo") becomes an ordinary todo. On Now or Tomorrow a
+  // penciled-in date comes off.
   function moveTodo(t, listId, beforeId) {
+    const kids = stepsOf(t);
     const siblings = todosIn(listId).filter(x => x.id !== t.id);
     let order;
     const bi = beforeId ? siblings.findIndex(x => x.id === beforeId) : -1;
     if (bi < 0) order = (siblings.at(-1)?.order ?? 0) + 1;
     else order = ((siblings[bi - 1]?.order ?? siblings[bi].order - 2) + siblings[bi].order) / 2;
-    touch(t, { listId, order });
+    const to = listById(listId);
+    const fields = { listId, order };
+    if (t.parentId) fields.parentId = null;
+    if (typeof t.pencil === "string" && !(to && canPencil({}, to))) fields.pencil = null;
+    touch(t, fields);
+    kids.forEach(k => { if (k.listId !== listId) touch(k, { listId }); });
     commit();
   }
 
@@ -1430,6 +1658,8 @@
     document.getSelection()?.removeAllRanges();
     drag.ghost = el("div", { class: "ghost" }, drag.t.text); document.body.append(drag.ghost);
     drag.row.classList.add("dragging"); document.body.classList.add("is-dragging");
+    // A todo's steps go with it.
+    boardEl.querySelectorAll(`[data-parent="${CSS.escape(drag.t.id)}"]`).forEach(r => r.classList.add("dragging"));
     haptic("lift");
     drag.raf = requestAnimationFrame(edgeScroll);
   }
@@ -1471,7 +1701,8 @@
     const col = under && under.closest(".col[data-list]");
     if (!col) { drag.ph.remove(); drag.target = null; return; }
     const body = col.querySelector(".col-body");
-    const rows = [...body.querySelectorAll(".todo:not(.dragging)")];
+    // Drops land between todos, never among a todo's steps.
+    const rows = [...body.querySelectorAll(".todo:not(.dragging):not(.step):not(.addstep)")];
     const before = rows.find(r => y < r.getBoundingClientRect().top + r.offsetHeight / 2) || null;
     if (drag.target !== col.dataset.list) document.querySelectorAll(".empty[hidden]").forEach(n => n.removeAttribute("hidden"));
     body.querySelector(".empty")?.setAttribute("hidden", "");
@@ -1541,8 +1772,75 @@
     if (d.target && e.type !== "pointercancel") {
       haptic("drop");
       if (d.t.listId === d.target) moveTodo(d.t, d.target, d.before);
-      else toast(`Moved to ${listById(d.target).name}`, undoable([d.t], () => moveTodo(d.t, d.target, d.before)));
+      else toast(`Moved to ${listById(d.target).name}`, undoable(family(d.t), () => moveTodo(d.t, d.target, d.before)));
     } else render();
+  }
+
+  // ---------- dragging a list ----------
+  // A list drags sideways by the grip in its header. The columns reorder as it
+  // passes them; near either edge the board scrolls. Dropping saves the new order.
+  let listDrag = null;
+  function startListDrag(e, list, col) {
+    if (e.button !== 0 || drag || listDrag) return;
+    e.preventDefault();
+    listDrag = { list, col, id: e.pointerId, x: e.clientX, lastX: e.clientX, started: false, raf: 0 };
+    document.body.classList.add("is-holding");
+    window.addEventListener("pointermove", onListMove);
+    window.addEventListener("pointerup", onListUp);
+    window.addEventListener("pointercancel", onListUp);
+    document.addEventListener("touchmove", noListScroll, { passive: false });
+  }
+  const noListScroll = e => { if (listDrag && listDrag.started) e.preventDefault(); };
+  function onListMove(e) {
+    const d = listDrag;
+    if (!d || e.pointerId !== d.id) return;
+    if (!d.started) {
+      if (Math.abs(e.clientX - d.x) < 6) return;
+      d.started = true; closePop();
+      d.col.classList.add("list-dragging"); document.body.classList.add("is-dragging");
+      haptic("lift");
+      d.raf = requestAnimationFrame(listEdgeScroll);
+    }
+    d.lastX = e.clientX;
+    placeList();
+  }
+  // Puts the held list before the first other list whose middle is right of the finger.
+  function placeList() {
+    const d = listDrag; if (!d) return;
+    const cols = [...boardEl.querySelectorAll(".col[data-list]")].filter(c => c !== d.col);
+    const before = cols.find(c => { const r = c.getBoundingClientRect(); return d.lastX < r.left + r.width / 2; });
+    const anchor = before || boardEl.querySelector(".new-list");
+    if (d.col.nextElementSibling !== anchor) { boardEl.insertBefore(d.col, anchor); haptic("tick"); }
+  }
+  function listEdgeScroll() {
+    const d = listDrag; if (!d || !d.started) return;
+    const r = boardEl.getBoundingClientRect(), zone = Math.min(56, r.width / 6);
+    let step = 0;
+    if (d.lastX > r.right - zone) step = Math.ceil(14 * (d.lastX - (r.right - zone)) / zone);
+    else if (d.lastX < r.left + zone) step = -Math.ceil(14 * ((r.left + zone) - d.lastX) / zone);
+    if (step) { const b = boardEl.scrollLeft; boardEl.scrollLeft += step; if (boardEl.scrollLeft !== b) placeList(); }
+    d.raf = requestAnimationFrame(listEdgeScroll);
+  }
+  function onListUp(e) {
+    const d = listDrag;
+    if (!d || e.pointerId !== d.id) return;
+    listDrag = null;
+    window.removeEventListener("pointermove", onListMove);
+    window.removeEventListener("pointerup", onListUp);
+    window.removeEventListener("pointercancel", onListUp);
+    document.removeEventListener("touchmove", noListScroll);
+    document.body.classList.remove("is-dragging", "is-holding");
+    cancelAnimationFrame(d.raf);
+    if (!d.started) return;
+    d.col.classList.remove("list-dragging");
+    if (e.type === "pointercancel") { render(); return; }
+    haptic("drop");
+    const ids = [...boardEl.querySelectorAll(".col[data-list]")].map(c => c.dataset.list);
+    const ls = ids.map(id => listById(id)).filter(Boolean);
+    const changed = ls.filter((l, i) => l.order !== i + 1);
+    if (!changed.length) { render(); return; }
+    const undo = undoable(changed, () => { ls.forEach((l, i) => { if (l.order !== i + 1) touch(l, { order: i + 1 }); }); commit(); });
+    toast(`Moved ${d.list.name}`, undo);
   }
 
   // ---------- undo ----------
@@ -2027,6 +2325,15 @@
       m.setAttribute("content", THEME_COLORS[t === "system" ? own : t]);
     });
   }
+  // How todos are written and how strong list colors are, per device like the theme.
+  const FONTS = ["hand", "neat", "print"];
+  function applyLook() {
+    const f = FONTS.includes(local.font) ? local.font : "hand";
+    if (f === "hand") delete document.documentElement.dataset.font; else document.documentElement.dataset.font = f;
+    if (local.colors === "bold") document.documentElement.dataset.colors = "bold"; else delete document.documentElement.dataset.colors;
+  }
+  document.querySelectorAll('input[name="font"]').forEach(r => r.addEventListener("change", () => { local.font = r.value; write(LOCAL_KEY, local); applyLook(); }));
+  document.querySelectorAll('input[name="colors"]').forEach(r => r.addEventListener("change", () => { local.colors = r.value; write(LOCAL_KEY, local); applyLook(); }));
   document.querySelectorAll('input[name="theme"]').forEach(r => r.addEventListener("change", () => {
     local.theme = r.value; write(LOCAL_KEY, local); applyTheme();
   }));
@@ -2101,6 +2408,8 @@
   document.getElementById("openSettings").addEventListener("click", () => {
     const t = ["light", "dark"].includes(local.theme) ? local.theme : "system";
     document.querySelector(`input[name="theme"][value="${t}"]`).checked = true;
+    document.querySelector(`input[name="font"][value="${FONTS.includes(local.font) ? local.font : "hand"}"]`).checked = true;
+    document.querySelector(`input[name="colors"][value="${local.colors === "bold" ? "bold" : "soft"}"]`).checked = true;
   });
 
   // ---------- keyboard shortcuts ----------
@@ -2220,7 +2529,7 @@
       else if (key === "ArrowDown" && idx < sibs.length - 1) { moveTodo(t, t.listId, sibs[idx + 2]?.id || null); focusTodo(t.id); }
       else if (key === "ArrowLeft" || key === "ArrowRight") {
         const to = neighborList(t.listId, key === "ArrowLeft" ? -1 : 1, false);
-        if (to) { const u = undoable([t], () => moveTodo(t, to.id, null)); focusTodo(t.id); toast(`Moved to ${to.name}`, u); }
+        if (to) { const u = undoable(family(t), () => moveTodo(t, to.id, null)); focusTodo(t.id); toast(`Moved to ${to.name}`, u); }
       }
       return;
     }
@@ -2247,7 +2556,7 @@
     }
     if (k === "Backspace" || k === "Delete") {
       e.preventDefault(); kbSel = null;
-      toast("Deleted", undoable([t], () => { touch(t, { deleted: true }); commit(); }));
+      toast("Deleted", undoable(family(t), () => { family(t).forEach(x => touch(x, { deleted: true })); commit(); }));
       reselect(t.listId, idx);
     }
   });
@@ -2289,7 +2598,7 @@
       return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
     const rows = [["List", "Todo", "Status", "Checked on", "Moved to Done on"]];
-    for (const l of lists()) for (const t of todosIn(l.id)) rows.push([l.name, t.text, t.done ? "Checked" : "Open", t.doneDay || "", ""]);
+    for (const l of lists()) for (const t of todosIn(l.id)) for (const x of family(t)) rows.push([l.name, x === t ? x.text : "  - " + x.text, x.done ? "Checked" : "Open", x.doneDay || "", ""]);
     for (const t of [...archived(), ...olderDone()]) rows.push([t.fromName || "", t.text, "Done", t.doneDay || "", t.archivedDay || ""]);
     return "﻿" + rows.map(r => r.map(cell).join(",")).join("\r\n") + "\r\n";
   }
@@ -2756,7 +3065,7 @@
   window.addEventListener("hashchange", () => { readMove().then((moving) => { if (!moving) readLink(); }); });
 
   // ---------- boot ----------
-  applyTheme();
+  applyTheme(); applyLook();
   repairOrphans();
   packOld();
   write(BOARD_KEY, board);

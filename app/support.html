@@ -126,6 +126,16 @@
         </div>
       </details>
 
+      <details id="steps-tags-dates">
+        <summary>Can a todo have steps, tags or a date?</summary>
+        <div>
+          <p><strong>Steps.</strong> Choose <strong>Add steps</strong> in a todo's ••• menu and write them on the indented lines below it. Checking the last step checks the todo, and the steps move with it wherever it goes, Done included. Drag a step out, or choose <strong>Make it its own todo</strong>, to turn it into an ordinary todo.</p>
+          <p><strong>Tags.</strong> Write a word with # in front, like <em>#kids</em> or <em>#work</em>, anywhere in a todo. Tap the tag to highlight every todo with it on all your lists, and tap it again (or Clear) to stop.</p>
+          <p><strong>A day.</strong> On Later or another of your own lists, choose <strong>Pencil in for…</strong> in a todo's ••• menu and pick a day. The morning before, it moves to Tomorrow, then into Now on the day. If Tomorrow doesn't carry into Now in your settings, it goes straight to Now on the day. Nothing is ever marked late. Shared lists can't pencil todos in, since the todo would leave the list for everyone.</p>
+          <p><strong>Links.</strong> A web address in a todo becomes a link you can tap. To keep a file with a todo, put it in iCloud Drive or Google Drive and paste its share link.</p>
+        </div>
+      </details>
+
       <details id="quick-add">
         <summary>Can I add a todo without opening the app?</summary>
         <div>
@@ -137,6 +147,7 @@
             <li>Add a <strong>Get Contents of URL</strong> action. Paste the address from <strong>Copy address</strong> as the URL. Tap the arrow to show more: set Method to <strong>POST</strong>, add a header named <code>Authorization</code> with the value <code>Bearer</code>, a space, and the token from <strong>Copy access token</strong>. Set Request Body to <strong>JSON</strong> and add a Text field named <code>text</code> set to <em>Provided Input</em>.</li>
             <li>Optional: add a field named <code>to</code> with <code>tomorrow</code>, <code>later</code> or a list's name to add somewhere other than Now.</li>
           </ol>
+          <p><strong>Add by voice.</strong> Use a <strong>Dictate Text</strong> action in place of Ask for Input, and set the <code>text</code> field to <em>Dictated Text</em>. Then "Hey Siri, Add to Now" listens and adds what you say, without opening the app, even from the Lock Screen or CarPlay. Inside the app, the microphone key on the iPhone keyboard dictates into any Add box too.</p>
           <p>Now you can say "Hey Siri, Add to Now", or put it on the Action button, Back Tap or a Lock Screen widget. To add from the share sheet, turn on <strong>Show in Share Sheet</strong> in the shortcut's details and use <em>Shortcut Input</em> instead of Ask for Input. Each line of text becomes its own todo, so a pasted list works too. The todo shows up in the app at its next sync.</p>
           <p><strong>Android and Chrome on a computer.</strong> Once Now or Later is installed, it appears in the share sheet: share a link or some text to it and it lands in Now. Long-press the app icon (or right-click it in the Dock or taskbar) for <strong>Add to Now</strong>, <strong>Add to Tomorrow</strong> and <strong>Add to Later</strong>.</p>
           <p><strong>Any device.</strong> Opening <code>now-or-later.app/?add=Buy%20milk</code> adds "Buy milk" to Now, and <code>&amp;to=tomorrow</code> picks another list. On iPhone, links open in Safari rather than the Home Screen app, and the two keep separate lists unless both are syncing, so the Shortcut above is the better choice there.</p>

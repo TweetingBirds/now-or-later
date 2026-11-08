@@ -86,16 +86,70 @@ export function quickLines(text) {
   return String(text || "").split(/\r?\n/).map((x) => x.trim().replace(/^[-*•]\s+/, "").slice(0, QUICK_LEN)).filter(Boolean).slice(0, QUICK_MAX);
 }
 
-// The morning: unfinished Tomorrow todos move to the end of Now, in order.
-// Only what was in Tomorrow before `midnight`: a todo changed since then was put
-// there today (on a device that already did its morning), so it stays.
+// Steps: a todo with a parentId sits under that todo, one level deep, on the same
+// list. Each step is its own todo, so two people checking different steps both
+// keep their checks. A step whose parent isn't live on the same list is shown
+// (and moved) as an ordinary todo.
+const byOrder = (a, b) => (a.order || 0) - (b.order || 0);
+const liveIn = (todos, id) => todos.filter((t) => !t.deleted && !t.archived && t.listId === id);
+function splitSteps(xs) {
+  const ids = new Set(xs.filter((t) => !t.parentId).map((t) => t.id));
+  const top = xs.filter((t) => !t.parentId || !ids.has(t.parentId)).sort(byOrder);
+  const kids = (p) => xs.filter((t) => t.parentId === p.id).sort(byOrder);
+  return { top, kids };
+}
+// Moves `parents` (top-level todos) to the end of list `toId`, in order, each
+// followed by its steps, which keep their own order. Returns [{ todo, order }].
+function moveToEnd(todos, parents, kids, toId) {
+  let o = Math.max(0, ...splitSteps(liveIn(todos, toId)).top.map((t) => t.order || 0));
+  const out = [];
+  for (const todo of parents) {
+    out.push({ todo, order: ++o });
+    for (const s of kids(todo)) out.push({ todo: s, order: s.order || 0 });
+  }
+  return out;
+}
+
+// The morning: unfinished Tomorrow todos move to the end of Now, in order, steps
+// and all. Only what was in Tomorrow before `midnight`: a todo changed since then
+// was put there today (on a device that already did its morning), so it stays.
 // Returns [{ todo, order }] for the caller to apply.
 export function carryOver(todos, nowId, tomId, midnight) {
-  const live = (id) => todos.filter((t) => !t.deleted && !t.archived && t.listId === id).sort((a, b) => (a.order || 0) - (b.order || 0));
-  let o = Math.max(0, ...live(nowId).map((t) => t.order || 0));
-  return live(tomId).filter((t) => stamp(t) < midnight).map((todo) => ({ todo, order: ++o }));
+  const { top, kids } = splitSteps(liveIn(todos, tomId));
+  return moveToEnd(todos, top.filter((t) => stamp(t) < midnight), kids, nowId);
+}
+
+// "Pencil in for…": a todo with pencil: "YYYY-MM-DD" on another list comes to the
+// front of the notebook in time for that day. With the Tomorrow-to-Now carry on,
+// it moves to Tomorrow the morning before (the carry brings it into Now on the
+// day); without it, or without a Tomorrow list, it goes straight to Now on the
+// day. A day that has passed (nobody opened the app) goes to Now. Shared lists
+// are left out (`skip`): each person's board would pull the todo off the list.
+// Returns [{ todo, listId, order }]; the caller clears `pencil` on the todos.
+export function pencilMoves(todos, { nowId, tomId, today, tomorrow, carry, skip = new Set() }) {
+  if (!nowId) return [];
+  const out = [];
+  const lists = new Set(todos.filter((t) => !t.deleted && !t.archived && typeof t.pencil === "string" && t.listId !== nowId && t.listId !== tomId && !skip.has(t.listId)).map((t) => t.listId));
+  const due = new Map([[nowId, []]]);
+  if (carry && tomId) due.set(tomId, []);
+  const kidsOf = new Map();
+  for (const id of lists) {
+    const { top, kids } = splitSteps(liveIn(todos, id));
+    for (const t of top) {
+      if (typeof t.pencil !== "string") continue;
+      kidsOf.set(t.id, kids);
+      if (t.pencil <= today) due.get(nowId).push(t);
+      else if (due.has(tomId) && t.pencil === tomorrow) due.get(tomId).push(t);
+    }
+  }
+  for (const [to, ts] of due) {
+    if (!ts.length) continue;
+    ts.sort((a, b) => a.pencil.localeCompare(b.pencil) || byOrder(a, b));
+    for (const m of moveToEnd(todos, ts, (p) => kidsOf.get(p.id)(p), to)) out.push({ ...m, listId: to });
+  }
+  return out;
 }
 
 if (typeof globalThis !== "undefined") {
-  globalThis.NatCore = { TOMBSTONE_DAYS, OLD_DAYS, QUICK_MAX, QUICK_LEN, stamp, wins, pickNewest, pruneTombstones, mergeBoards, dayKey, isOld, oldCutoff, quickTarget, quickLines, carryOver };
+  globalThis.NatCore = { TOMBSTONE_DAYS, OLD_DAYS, QUICK_MAX, QUICK_LEN, stamp, wins, pickNewest, pruneTombstones, mergeBoards, dayKey, isOld, oldCutoff, quickTarget, quickLines, carryOver, pencilMoves };
 }

@@ -78,7 +78,7 @@
 //                          MAX_SHARED  how many shared lists may exist (default 100)
 
 import { TOMBSTONE_DAYS, stamp, pickNewest, pruneTombstones, mergeBoards as mergeCore, isOld, oldCutoff, quickTarget, quickLines } from "../app/core.js";
-import { handleRpc } from "./mcp.js";
+import { handleRpc, DOCS_URL } from "./mcp.js";
 
 const SNAPSHOT_DAYS = 30;
 const INVITE_DAYS = 14;    // default life of an invite link
@@ -896,10 +896,10 @@ async function agents(request, env, who, url) {
 
 // /mcp and /mcp/<agent key>: see worker/mcp.js.
 async function mcpRoute(request, env, keyInPath) {
-  if (request.method !== "POST") return json({ error: "method not allowed" }, 405, { Allow: "POST, OPTIONS" });
+  if (request.method !== "POST") return json({ error: "method not allowed: this is an MCP server (Streamable HTTP, POST only)", docs: DOCS_URL }, 405, { Allow: "POST, OPTIONS" });
   const header = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
   const who = await agentIs(keyInPath || header, env);
-  if (!who) return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "This assistant's key isn't valid. Make a new connection in Now or Later under Settings > Sync > Advanced." } }, 401);
+  if (!who) return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "This assistant's key isn't valid. Make a new connection in Now or Later under Settings > Sync > Advanced. Setup: " + DOCS_URL } }, 401);
   if (who.gone) return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "This connection was removed." } }, 410);
   const { value, error } = await readJson(request, 200_000);
   if (error) return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
@@ -1092,7 +1092,7 @@ export default {
       return json({ error: "method not allowed" }, 405);
     }
 
-    return new Response("Now or Later sync is running. Your lists live at /data and need your access token.\n", {
+    return new Response("Now or Later sync is running. Your lists live at /data and need your access token.\nAI agents: see " + DOCS_URL + "\n", {
       status: 200,
       headers: cors({ "Content-Type": "text/plain; charset=utf-8" }),
     });

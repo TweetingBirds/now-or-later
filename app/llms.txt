@@ -1,0 +1,13 @@
+# Now or Later
+
+> A simple todo app that works like a paper notebook: lists for Now, Tomorrow and Later, with sync across devices. AI agents can read and manage a person's todos through an MCP server on their sync service, once the person makes a connection address in the app.
+
+## Docs
+
+- [Connecting an AI agent](https://now-or-later.app/agents.md): how to get a connection address, add the MCP server to Claude Code, Claude, Cursor, VS Code and other clients, and what each tool does
+- [Support and FAQ](https://now-or-later.app/support.html): how the app works, for people
+- [Privacy](https://now-or-later.app/privacy.html)
+
+## Optional
+
+- [Source code](https://github.com/TweetingBirds/now-or-later): the app, the sync Worker and its MCP server (worker/mcp.js)

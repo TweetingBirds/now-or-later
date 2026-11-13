@@ -178,7 +178,7 @@ Every board response carries `X-Board` (the board id the app pins itself to), `X
 
 Settings > Sync > Advanced > **AI assistants** calls `POST /agents`, which makes an `na_` key stored only as `atok:<hash>` (with the board, a label, `read` or `write`, and the date), and shows `https://<worker>/mcp/na_…` once. Claude's custom connector screen has nowhere to put a header, so the key rides in the address; a header (`Authorization: Bearer na_…` on `POST /mcp`) works too. Agent keys open nothing but `/mcp`: `whoIs` refuses them everywhere else, so they can't read `/data` directly, share, invite, add devices or delete the board. At most 10 per board; deleting the board, or removing an owner's `TOKEN_*` secret, ends them.
 
-The app sends `X-Time-Zone` with each `PUT /data`, and the Worker keeps it as `tz` beside the board (not in settings), so `list_todos` and `check_off` use the person's own date. The tools follow the app's rules: steps go with their todo, the last step checks its todo, **Done right away** archives a checked todo, and `pencil_in` refuses Now, Tomorrow, shared lists and steps.
+The app sends `X-Time-Zone` with each `PUT /data`, and the Worker keeps it as `tz` beside the board (not in settings), so `list_todos` and `check_off` use the person's own date. The tools follow the app's rules: steps go with their todo, the last step checks its todo, "Finished todos move to Done: Right away" archives a checked todo, and `pencil_in` refuses Now, Tomorrow, shared lists and steps.
 
 ### Costs and limits
 

@@ -24,6 +24,7 @@
 
 import { stamp, quickLines, QUICK_MAX } from "../app/core.js";
 
+export const DOCS_URL = "https://now-or-later.app/agents.md";
 export const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const TEXT_MAX = 5000;
 const DONE_SHOWN = 50; // recent Done todos list_todos returns when asked

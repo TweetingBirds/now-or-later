@@ -49,6 +49,13 @@
 // of text becomes a todo at the bottom of Now, or of the list named by `to` (a
 // role like "tomorrow" or "later", or a list's name). Same bearer token as /data.
 //
+// AI assistants: POST /mcp is an MCP server (see worker/mcp.js) that lets an AI
+// assistant read the board and, if allowed, add, check off, move, edit, pencil in
+// and delete todos. It takes agent keys ("na_", stored as "atok:<hash>"), which
+// work nowhere else. POST /agents { label, scope: "read" | "write" } makes one
+// (the key is shown once), GET /agents lists them and DELETE /agents/<id> removes
+// one. Deleting a board removes them too.
+//
 // Backups: once a day (the cron trigger in wrangler.toml) the Worker copies every
 // board to a snapshot key "snap:<board>:<ISO time>" that KV deletes by itself after
 // SNAPSHOT_DAYS. A board that hasn't changed since its last nightly copy is skipped,
@@ -71,6 +78,7 @@
 //                          MAX_SHARED  how many shared lists may exist (default 100)
 
 import { TOMBSTONE_DAYS, stamp, pickNewest, pruneTombstones, mergeBoards as mergeCore, isOld, oldCutoff, quickTarget, quickLines } from "../app/core.js";
+import { handleRpc } from "./mcp.js";
 
 const SNAPSHOT_DAYS = 30;
 const INVITE_DAYS = 14;    // default life of an invite link
@@ -94,6 +102,8 @@ const MAX_ITEMS = { lists: 500, todos: 30_000, old: 20_000 };
 const TEXT_MAX = 5000;     // characters in a todo
 const NAME_MAX = 100;      // characters in a list name
 const DEVICE_ID = /^[a-f0-9]{64}$/;
+const AGENT_TOKEN = /^na_[A-Za-z0-9_-]{43}$/;
+const MAX_AGENTS = 10;     // AI assistant connections per board
 const COLOR = /^#[0-9a-f]{6}$/i;
 const DEFAULT_COLOR = "#a3a9b5";
 const EMPTY = () => ({ version: 1, settings: {}, lists: [], todos: [] });
@@ -179,6 +189,21 @@ export async function whoIs(request, env, { fresh = false } = {}) {
   if (who && !who.gone) tokenCache.set(hash, { who, until: Date.now() + CACHE_MS });
   else tokenCache.delete(hash);
   return who;
+}
+
+// Agent keys open one board, only through /mcp. Returns { board, name, kind,
+// scope, label, agent } or { gone: true } or null, like whoIs. Read fresh every
+// time: a removed key stops working at once.
+export async function agentIs(token, env) {
+  if (!AGENT_TOKEN.test(token || "")) return null;
+  const hash = await hashToken(token);
+  const rec = await env.NOW_AND_THEN.get("atok:" + hash, "json");
+  // Same as device tokens: an owner board's keys stop if its TOKEN_* secret goes.
+  if (rec && rec.board && (rec.kind !== "owner" || env["TOKEN_" + rec.board.toUpperCase()])) {
+    return { board: rec.board, name: rec.name || "", kind: rec.kind === "owner" ? "owner" : "invited", admin: false, scope: rec.scope === "write" ? "write" : "read", label: rec.label || "", agent: hash };
+  }
+  if (await env.NOW_AND_THEN.get("gone:" + hash)) return { gone: true };
+  return null;
 }
 
 // ---------- snapshots ----------
@@ -269,6 +294,7 @@ export async function deleteBoard(env, board, hash) {
   }
   if (hash) await forgetToken(env, "tok:", hash);
   for (const d of await devicesOf(env, board)) await forgetToken(env, "dtok:", d.id);
+  for (const a of await agentsOf(env, board)) await forgetToken(env, "atok:", a.id);
   return { deleted: true, board, snapshots: snaps.length };
 }
 // Removes a token, leaving a "gone" marker so its devices are told the board was
@@ -277,6 +303,11 @@ async function forgetToken(env, prefix, hash) {
   await env.NOW_AND_THEN.delete(prefix + hash);
   await env.NOW_AND_THEN.put("gone:" + hash, "1", { expirationTtl: GONE_DAYS * 86400 });
   tokenCache.delete(hash);
+}
+async function agentsOf(env, board) {
+  return (await listKeys(env, "atok:"))
+    .filter((k) => k.metadata && k.metadata.board === board)
+    .map((k) => ({ id: k.name.slice(5), label: k.metadata.label || "", scope: k.metadata.scope === "write" ? "write" : "read", created: k.metadata.created || "" }));
 }
 async function devicesOf(env, board) {
   return (await listKeys(env, "dtok:"))
@@ -351,7 +382,7 @@ async function readInbox(env, board) {
 }
 async function addToInbox(env, board, todos) {
   const kept = await readInbox(env, board);
-  await env.NOW_AND_THEN.put("inbox:" + board, JSON.stringify({ todos: [...kept, ...todos] }), { expirationTtl: INBOX_DAYS * 86400 });
+  await env.NOW_AND_THEN.put("inbox:" + board, JSON.stringify({ todos: pickNewest([kept, todos]) }), { expirationTtl: INBOX_DAYS * 86400 });
 }
 // The board for GET /data: stored board, shared lists and anything in the inbox.
 export async function readBoard(env, boardId, stored) {
@@ -363,7 +394,7 @@ export async function readBoard(env, boardId, stored) {
 
 // Merges an incoming board into the stored board and its shared lists, writes
 // whatever changed, and returns the merged view.
-export async function putBoard(env, who, stored, incoming, syncedAt = 0) {
+export async function putBoard(env, who, stored, incoming, syncedAt = 0, tz = "") {
   const view = await openBoard(env, who.board, stored);
   const { docs } = view;
   let shared = view.shared.map((m) => ({ ...m }));
@@ -425,6 +456,10 @@ export async function putBoard(env, who, stored, incoming, syncedAt = 0) {
   for (const t of ownTodos) if (isOld(t, cut, archivedNow)) packing.push(t);
   const packedIds = new Set(packing.map((t) => t.id));
   const next = { version: 1, settings: merged.settings, lists, todos: ownTodos.filter((t) => !packedIds.has(t.id) || !isOld(t, cut, archivedNow)), shared };
+  // The person's time zone, from the app (X-Time-Zone), so an AI assistant's
+  // "today" is theirs. Kept beside the board, not in settings, so it never syncs.
+  const zone = validZone(tz) || (stored && validZone(stored.tz));
+  if (zone) next.tz = zone;
   await addOld(env, who.board, packing.map((t) => cleanColors(t, "fromColor")));
   buryStale(next, stale);
   for (const sid of leaving) {
@@ -436,6 +471,11 @@ export async function putBoard(env, who, stored, incoming, syncedAt = 0) {
   }
   if (!sameJson(next, stored)) await env.NOW_AND_THEN.put("board:" + who.board, JSON.stringify(next));
   return compose(next, docs, next.shared);
+}
+
+export function validZone(tz) {
+  if (typeof tz !== "string" || !tz || tz.length > 64) return "";
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return tz; } catch (e) { return ""; }
 }
 
 // Sorts out what a device sent before it's merged:
@@ -675,7 +715,7 @@ function cors(extra = {}) {
   return {
     "Access-Control-Allow-Origin": "*", // security rests on the token
     "Access-Control-Allow-Methods": "GET, PUT, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Expect-Board, X-Synced-At",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Expect-Board, X-Synced-At, X-Time-Zone, Mcp-Protocol-Version, Mcp-Session-Id",
     "Access-Control-Expose-Headers": "X-Board, X-Board-Name, X-Board-Kind, X-Board-Admin, X-Server-Time",
     "Access-Control-Max-Age": "86400",
     "X-Server-Time": String(Date.now()), // the app keeps its clock in step with this
@@ -822,6 +862,72 @@ async function connectDevice(request, env) {
   return json({ token, board: rec.board }, 200, boardHeaders({ board: rec.board, name: rec.name, kind: rec.kind }));
 }
 
+// ---------- AI assistants ----------
+// POST /agents { label, scope } makes an agent key for this board and returns it
+// once, with the address to paste into an assistant's connector settings.
+async function agents(request, env, who, url) {
+  const id = (url.pathname.replace(/\/+$/, "").match(/\/agents\/([^/]+)$/) || [])[1];
+  const m = request.method;
+  const hdrs = boardHeaders(who);
+  if (m === "POST" && !id) {
+    const { value, error } = await readJson(request, 2000);
+    if (error) return error;
+    if ((await agentsOf(env, who.board)).length >= MAX_AGENTS) return json({ error: `There are already ${MAX_AGENTS} assistants connected. Remove one first.` }, 409, hdrs);
+    const token = "na_" + b64url(randomBytes(32));
+    const rec = { board: who.board, name: who.name || "", kind: who.kind, label: cleanName(value.label) || "AI assistant", scope: value.scope === "write" ? "write" : "read", created: new Date().toISOString() };
+    const hash = await hashToken(token);
+    await env.NOW_AND_THEN.put("atok:" + hash, JSON.stringify(rec), { metadata: rec });
+    const base = url.origin + url.pathname.replace(/\/agents\/?$/, "");
+    return json({ id: hash, token, url: base + "/mcp/" + token, label: rec.label, scope: rec.scope, created: rec.created }, 200, hdrs);
+  }
+  if (m === "GET" && !id) {
+    const list = await agentsOf(env, who.board);
+    return json({ agents: list.sort((a, b) => (b.created || "").localeCompare(a.created || "")) }, 200, hdrs);
+  }
+  if (m === "DELETE" && id) {
+    if (!DEVICE_ID.test(id)) return json({ error: "not found" }, 404, hdrs);
+    const got = await env.NOW_AND_THEN.getWithMetadata("atok:" + id);
+    if (got.value === null || !got.metadata || got.metadata.board !== who.board) return json({ error: "not found" }, 404, hdrs);
+    await forgetToken(env, "atok:", id);
+    return json({ removed: true }, 200, hdrs);
+  }
+  return json({ error: "method not allowed" }, 405, hdrs);
+}
+
+// /mcp and /mcp/<agent key>: see worker/mcp.js.
+async function mcpRoute(request, env, keyInPath) {
+  if (request.method !== "POST") return json({ error: "method not allowed" }, 405, { Allow: "POST, OPTIONS" });
+  const header = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  const who = await agentIs(keyInPath || header, env);
+  if (!who) return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "This assistant's key isn't valid. Make a new connection in Now or Later under Settings > Sync > Advanced." } }, 401);
+  if (who.gone) return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "This connection was removed." } }, 410);
+  const { value, error } = await readJson(request, 200_000);
+  if (error) return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
+  const KEY = "board:" + who.board;
+  let stored;
+  const store = {
+    async read() {
+      stored = await env.NOW_AND_THEN.get(KEY, "json");
+      return { board: await readBoard(env, who.board, stored), tz: stored && stored.tz };
+    },
+    // The inbox first, as quick add does: if the save races a device's, the
+    // change still reaches the board on its next read or save.
+    async save(todos) {
+      await addToInbox(env, who.board, todos);
+      await putBoard(env, who, stored, { version: 1, settings: (stored && stored.settings) || {}, lists: [], todos });
+    },
+  };
+  const batch = Array.isArray(value);
+  const msgs = (batch ? value : [value]).slice(0, 20);
+  const out = [];
+  for (const msg of msgs) {
+    const answer = await handleRpc(msg, who, store);
+    if (answer) out.push(answer);
+  }
+  if (!out.length) return new Response(null, { status: 202, headers: cors() });
+  return json(batch ? out : out[0], 200, { "X-Board-Kind": who.kind });
+}
+
 // Admin endpoints: create, list and revoke invites; list and remove invited boards.
 async function admin(request, env, who, url) {
   if (!who.admin) return json({ error: "forbidden" }, 403);
@@ -878,6 +984,16 @@ export default {
     if (/\/shared(\/[^/]+){0,3}$/.test(path)) {
       const who = await whoIs(request, env, { fresh: true });
       return authError(who) || sharedApi(request, env, who, url);
+    }
+
+    // OAuth discovery: there is none (agent keys go in the address or a header), and
+    // a 404 here tells MCP clients so instead of the plain-text note below.
+    if (path.includes("/.well-known/")) return json({ error: "not found" }, 404);
+    const mcp = path.match(/\/mcp(?:\/([^/]+))?$/);
+    if (mcp) return mcpRoute(request, env, mcp[1] ? decodeURIComponent(mcp[1]) : "");
+    if (/\/agents(\/[^/]+)?$/.test(path)) {
+      const who = await whoIs(request, env, { fresh: true });
+      return authError(who) || agents(request, env, who, url);
     }
 
     if (path.endsWith("/devices/connect")) {
@@ -970,7 +1086,7 @@ export default {
           if (Array.isArray(incoming[k]) && incoming[k].length > MAX_ITEMS[k]) return json({ error: "too many " + k }, 413, hdrs);
         }
         const syncedAt = Number(request.headers.get("X-Synced-At")) || 0;
-        return json(await putBoard(env, who, stored, incoming, syncedAt), 200, hdrs);
+        return json(await putBoard(env, who, stored, incoming, syncedAt, request.headers.get("X-Time-Zone") || ""), 200, hdrs);
       }
 
       return json({ error: "method not allowed" }, 405);

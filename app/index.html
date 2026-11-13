@@ -186,6 +186,29 @@
           <p class="msg device-msg" id="quickMsg" role="status"></p>
         </section>
 
+        <section class="group sync-more" id="agentZone" hidden aria-labelledby="gAgents">
+          <h3 id="gAgents">AI assistants</h3>
+          <p>Connect an AI assistant like Claude so it can read your lists, and if you let it, add, check off and move todos for you. Each connection gets its own private address. Remove it and it stops working. <a href="support.html#assistants">How to set it up</a></p>
+          <div class="row start invite-new">
+            <input type="text" id="agentLabel" placeholder="Which assistant (optional)" maxlength="40" autocomplete="off" aria-label="Which assistant this is for">
+            <select id="agentScope" aria-label="What it can do">
+              <option value="read">Can only read</option>
+              <option value="write">Can read and change</option>
+            </select>
+            <button class="btn" type="button" id="agentMake">Connect an assistant</button>
+          </div>
+          <div class="restore-box" id="agentNew" hidden>
+            <p>Paste this address into your assistant's connector settings. It's only shown now, and anyone who has it can reach your lists, so keep it private.</p>
+            <input type="text" id="agentUrl" readonly aria-label="Address for the assistant" spellcheck="false">
+            <div class="row start">
+              <button class="btn primary" type="button" id="agentCopy">Copy address</button>
+              <button class="btn" type="button" id="agentDone">Done</button>
+            </div>
+          </div>
+          <ul class="invite-list" id="agentList"></ul>
+          <p class="msg device-msg" id="agentMsg" role="status"></p>
+        </section>
+
         <section class="group invites" id="invites" hidden aria-labelledby="gInvites">
           <h3 id="gInvites">Invite people</h3>
           <p>An invite link gives someone their own synced lists on this sync service. It works once and expires after 14 days. The note is only for you, to remember who it's for.</p>

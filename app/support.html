@@ -154,6 +154,21 @@
         </div>
       </details>
 
+      <details id="assistants">
+        <summary>Can an AI assistant like Claude manage my todos?</summary>
+        <div>
+          <p>Yes, if sync is on. In Settings, open <strong>Sync</strong>, then <strong>Advanced</strong>, and find <strong>AI assistants</strong>. Choose whether it <strong>Can only read</strong> your lists or <strong>Can read and change</strong> them, then tap <strong>Connect an assistant</strong> and copy the address it shows. The address is only shown once.</p>
+          <ul>
+            <li><strong>Claude (web, desktop and phone).</strong> In Claude's Settings, open <strong>Connectors</strong>, choose <strong>Add custom connector</strong>, give it a name like <em>Now or Later</em>, and paste the address as the URL. Leave the sign-in settings empty.</li>
+            <li><strong>Claude Code.</strong> Run <code>claude mcp add --transport http now-or-later</code> followed by the address.</li>
+            <li><strong>Other assistants.</strong> Anything that can use a remote MCP server (Streamable HTTP) works the same way: paste the address as the server URL.</li>
+          </ul>
+          <p>Then ask things like "What's on my list for today?", "Add milk and eggs to Now", "Move the dentist to Tomorrow" or "Pencil in renewing my passport for March 3". An assistant that can change your lists can add, check off, move, rewrite, pencil in and delete todos. It can't rename or delete lists, share them, or touch your sync settings. Its changes show up in the app at the next sync, like edits from another device, and the nightly backups cover them too.</p>
+          <p><strong>Setting it up with an AI agent?</strong> Give it the address and point it to <a href="agents.md">now-or-later.app/agents.md</a>, which has the setup steps for each kind of app and what every tool does.</p>
+          <p>Anyone who has the address can reach your lists, so keep it private. To stop an assistant, tap <strong>Remove</strong> next to it in the same place.</p>
+        </div>
+      </details>
+
       <h3>Sync across your devices</h3>
 
       <details id="sync">

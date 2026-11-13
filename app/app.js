@@ -9,7 +9,7 @@
 
   // APP_VERSION is bumped by hand for notable releases. The BUILD_* values are
   // stamped by the GitHub Pages workflow on every deploy (left as-is locally).
-  const APP_VERSION = "1.27.0";
+  const APP_VERSION = "1.28.0";
   const BUILD_NUMBER = "__BUILD_NUMBER__";
   const BUILD_SHA = "__BUILD_SHA__";
   const BUILD_DATE = "__BUILD_DATE__";
@@ -517,6 +517,8 @@
       // When this device last sent its board here (see dropRejected).
       const prevSent = local.synced ? local.sentAt || 0 : 0, sentAt = clockNow(), asked = Date.now();
       if (prevSent) headers["X-Synced-At"] = String(prevSent);
+      // So an AI assistant's "today" is this person's today (see Settings > Sync > AI assistants).
+      try { const tz = Intl.DateTimeFormat().resolvedOptions().timeZone; if (tz) headers["X-Time-Zone"] = tz; } catch (e) {}
       const old = oldToSend();
       const res = await fetch(dataUrl(), { method: "PUT", headers, body: JSON.stringify(old.length ? Object.assign({}, board, { old }) : board) });
       noteClock(res, asked);
@@ -2027,6 +2029,9 @@
     const on = syncConfigured() && local.synced && !local.otherBoard;
     document.getElementById("syncMore").hidden = !on;
     document.getElementById("quickAddZone").hidden = !on;
+    document.getElementById("agentZone").hidden = !on;
+    document.getElementById("agentNew").hidden = true;
+    agentMsg.textContent = "";
     quickMsg.textContent = "";
     document.getElementById("deleteZone").hidden = !(on && local.boardKind === "invited");
     document.getElementById("deleteBox").hidden = true;
@@ -2034,7 +2039,7 @@
     document.getElementById("invites").hidden = !(on && local.admin);
     document.getElementById("advanced").hidden = !on;
     if (on && local.admin) loadInvites();
-    if (on) loadDevices();
+    if (on) { loadDevices(); loadAgents(); }
   }
   // Says what happened right under the button (a toast is easy to miss in
   // Settings) and what to do next with the link.
@@ -2106,6 +2111,47 @@
   }
   document.getElementById("quickUrl").addEventListener("click", e => copyQuick(e.currentTarget, workerBase() + "/add", "Copy address", "the address"));
   document.getElementById("quickToken").addEventListener("click", e => copyQuick(e.currentTarget, local.syncToken, "Copy access token", "the token"));
+
+  // AI assistants: each connection is its own key for the Worker's MCP server
+  // (POST /mcp/<key>), read only or read and change. The address is shown once.
+  const agentMsg = document.getElementById("agentMsg");
+  const agentSay = (text, bad) => { agentMsg.className = "msg device-msg " + (bad ? "bad" : "ok"); agentMsg.textContent = text; };
+  async function loadAgents() {
+    const ul = document.getElementById("agentList");
+    try {
+      const { agents } = await syncApi("/agents");
+      ul.replaceChildren(...agents.map(a => el("li", {},
+        el("span", {}, `${a.label} · ${a.scope === "write" ? "can read and change" : "can only read"} · added ${shortDate(a.created)}`),
+        el("button", { class: "btn danger", type: "button", onclick: async (ev) => {
+          ev.currentTarget.disabled = true;
+          try { await syncApi("/agents/" + encodeURIComponent(a.id), { method: "DELETE" }); agentSay(`Removed. ${a.label} can't reach your lists anymore.`); loadAgents(); }
+          catch (e) { agentSay("Couldn't remove it: " + e.message, true); }
+        } }, "Remove"))));
+    } catch (e) { ul.replaceChildren(); agentSay(/404|needs an update/.test(e.message) ? "This sync service needs an update before assistants can connect." : e.message, true); }
+  }
+  document.getElementById("agentMake").addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget, label = document.getElementById("agentLabel");
+    btn.disabled = true;
+    try {
+      const made = await syncApi("/agents", { method: "POST", body: JSON.stringify({ label: label.value.trim(), scope: document.getElementById("agentScope").value }) });
+      label.value = "";
+      document.getElementById("agentUrl").value = made.url;
+      document.getElementById("agentNew").hidden = false;
+      agentMsg.textContent = "";
+      loadAgents();
+    } catch (e) { agentSay("Couldn't connect one: " + (e instanceof TypeError ? "the sync service can't be reached." : e.message), true); }
+    finally { btn.disabled = false; }
+  });
+  document.getElementById("agentCopy").addEventListener("click", async (ev) => {
+    const url = document.getElementById("agentUrl"), btn = ev.currentTarget;
+    try { await navigator.clipboard.writeText(url.value); } catch (e) { url.select(); return; }
+    btn.textContent = "Copied ✓";
+    setTimeout(() => { btn.textContent = "Copy address"; }, 2500);
+  });
+  document.getElementById("agentDone").addEventListener("click", () => {
+    document.getElementById("agentNew").hidden = true;
+    document.getElementById("agentUrl").value = "";
+  });
 
   const inviteMsg = (text, bad) => { const m = document.getElementById("inviteMsg"); m.className = bad ? "msg bad" : "msg"; m.textContent = text; };
   async function adminFetch(path, opts = {}) {

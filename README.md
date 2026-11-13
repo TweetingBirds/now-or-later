@@ -124,9 +124,10 @@ A shared list is a self-contained record (list, todos, members) referenced from 
 - **Old devices.** Each `PUT /data` carries `X-Synced-At`, the time of that device's previous upload. The Worker drops any list or todo it has never seen that is older than both that time and the 60-day tombstone window, and answers with a tombstone, so a phone that comes back online after months can't bring back things deleted long ago. A device that has never synced sends no header, so its lists always upload.
 - **Removed from a shared list.** Shared lists the Worker no longer has for that board are dropped from an upload, along with their todos, instead of becoming private copies.
 - **Quick add.** `POST /add` writes the todo to `inbox:<board>` (two days) before saving the board, and every `GET /data` and `PUT /data` folds the inbox in, so a todo from a Shortcut survives a device's upload landing at the same moment.
+- **AI assistants.** Each MCP tool call reads the board, changes the todos it names with a fresh `updatedAt`, and saves them the same way as a quick add (inbox first, then the normal merge), so it can't lose a race with a device either.
 - **Todo ids.** If a shared list carries a todo with the same id as one on the board, the board's copy wins, so the two can't overwrite each other.
 - **Colors.** List colors are checked against `#rrggbb` on the Worker and in the app; anything else becomes Pebble.
-- **Owner tokens** are compared by SHA-256 digest in constant time, and anything that isn't an owner secret or a well-formed `nt_`/`nd_` token is refused without a KV read.
+- **Owner tokens** are compared by SHA-256 digest in constant time, and anything that isn't an owner secret or a well-formed `nt_`/`nd_` (or, on `/mcp`, `na_`) token is refused without a KV read.
 
 ### Older Done
 
@@ -158,6 +159,8 @@ Owner boards (`TOKEN_*`) can't delete themselves, because the secret would keep 
 | `GET /old` | any | Done todos finished more than 90 days ago (see Older Done). |
 | `POST /devices`, `GET /devices`, `DELETE /devices/<id>` | any | Make a one-time device link, list devices, sign one out. |
 | `POST /devices/connect` `{code, label}` | none | Turn a device link into a device token. |
+| `POST /agents` `{label, scope}`, `GET /agents`, `DELETE /agents/<id>` | any | Connect an AI assistant (`scope` is `read` or `write`), list them, remove one. The `na_` key and its `/mcp/<key>` address are returned once. |
+| `POST /mcp`, `POST /mcp/<key>` | agent | MCP server (Streamable HTTP, stateless JSON). Tools: `list_todos`, `add_todos`, `check_off`, `move_todo`, `edit_todo`, `pencil_in`, `delete_todo`; read-only keys get `list_todos` only. See `worker/mcp.js`. |
 | `POST /join` `{code, name}` | none | Turn an invite into a board and token. |
 | `POST /invites` `{label, days}`, `GET /invites`, `DELETE /invites/<code>` | admin | Make, list and revoke invites. |
 | `GET /boards`, `DELETE /boards/<id>` | admin | List invited boards (name, note, date joined) and remove one. |
@@ -170,6 +173,12 @@ Owner boards (`TOKEN_*`) can't delete themselves, because the secret would keep 
 | `DELETE /shared/<sid>` | member | Leave a shared list (the last one out deletes it). |
 
 Every board response carries `X-Board` (the board id the app pins itself to), `X-Board-Name`, `X-Board-Kind` (`owner` or `invited`) and, for admins, `X-Board-Admin: 1`.
+
+### AI assistants
+
+Settings > Sync > Advanced > **AI assistants** calls `POST /agents`, which makes an `na_` key stored only as `atok:<hash>` (with the board, a label, `read` or `write`, and the date), and shows `https://<worker>/mcp/na_…` once. Claude's custom connector screen has nowhere to put a header, so the key rides in the address; a header (`Authorization: Bearer na_…` on `POST /mcp`) works too. Agent keys open nothing but `/mcp`: `whoIs` refuses them everywhere else, so they can't read `/data` directly, share, invite, add devices or delete the board. At most 10 per board; deleting the board, or removing an owner's `TOKEN_*` secret, ends them.
+
+The app sends `X-Time-Zone` with each `PUT /data`, and the Worker keeps it as `tz` beside the board (not in settings), so `list_todos` and `check_off` use the person's own date. The tools follow the app's rules: steps go with their todo, the last step checks its todo, "Finished todos move to Done: Right away" archives a checked todo, and `pencil_in` refuses Now, Tomorrow, shared lists and steps.
 
 ### Costs and limits
 

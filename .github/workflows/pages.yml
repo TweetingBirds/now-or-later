@@ -16,11 +16,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  # Build and deploy are separate jobs, as in GitHub's own Pages template. In one
+  # job, deploy-pages asked for the artifact a fraction of a second after it was
+  # uploaded and GitHub didn't list it yet ("No artifacts named github-pages"),
+  # which failed the v1.29.0 deploy three times on 2026-11-23.
+  build:
     runs-on: ubuntu-26.04
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
       - name: Checks
@@ -39,5 +40,13 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: app
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-26.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v5

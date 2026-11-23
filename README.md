@@ -43,6 +43,12 @@ Each person has their own board and their own access token. There are two kinds 
 
 To share one board, two people use the same token: **Copy link for another device** in Settings makes a link that carries it.
 
+### Several boards on one device
+
+A device can keep several boards (say one per app or area of work) and switch between them. **Settings > Boards** lists them, with **Add a board**, **Open**, **Rename** and **Remove** (which takes a board off this device only). Once there are two or more, the open board's name sits next to the wordmark, and tapping it opens a menu of boards.
+
+Each board is a *slot* in local storage with its own copy of every per-board key: the first slot (`main`) keeps the plain names (`nat.board.v1`, `nat.local.v1`, `nat.synced.v1`, `nat.old.v1`), and each added slot uses the same names with `@<slot id>` on the end. `nat.boards.v1` holds `{ current, slots: [{ id, label }] }` and only exists once a second board is added, so a one-board device is unchanged. Because the token, sync state, unsynced count, clock offset and the pinned board id (`X-Board` / `X-Expect-Board`) all live in a slot's `nat.local`, each board syncs on its own and gets its own "this token now opens a different board" warning. Switching sends the open board's unsynced edits first (up to 4 seconds), then reloads the page into the other slot, so nothing in memory carries over. Theme, todo writing, colors and the like are device choices and are copied to every slot. A board that isn't open doesn't poll; it catches up when it's opened. An invite or device link opened on a device that already syncs offers **Keep … on this device too**, which puts the new token in a new slot instead of replacing the current one.
+
 ## Names
 
 The app is called **Now or Later** (it was Now and Then until 1.11). The repository is `TweetingBirds/now-or-later` (renamed from `now-and-then`; GitHub redirects the old links). The Worker `now-and-then-sync`, the KV namespace `now-and-then` and the `NOW_AND_THEN` binding keep the old name, so nothing in Cloudflare had to move.
@@ -159,7 +165,8 @@ Owner boards (`TOKEN_*`) can't delete themselves, because the secret would keep 
 | `GET /old` | any | Done todos finished more than 90 days ago (see Older Done). |
 | `POST /devices`, `GET /devices`, `DELETE /devices/<id>` | any | Make a one-time device link, list devices, sign one out. |
 | `POST /devices/connect` `{code, label}` | none | Turn a device link into a device token. |
-| `POST /agents` `{label, scope}`, `GET /agents`, `DELETE /agents/<id>` | any | Connect an AI assistant (`scope` is `read` or `write`), list them, remove one. The `na_` key and its `/mcp/<key>` address are returned once. |
+| `POST /agents` `{label, scope, board_name}`, `GET /agents`, `DELETE /agents/<id>` | any | Connect an AI assistant (`scope` is `read` or `write`), list them, remove one. The `na_` key and its `/mcp/<key>` address are returned once. On a board the key was only added to, `DELETE` takes just that board off it. |
+| `POST /agents/attach` `{key, name}` | any | Let an existing assistant key also open this board (needs the key itself and this board's token). |
 | `POST /mcp`, `POST /mcp/<key>` | agent | MCP server (Streamable HTTP, stateless JSON). Tools: `list_todos`, `add_todos`, `check_off`, `move_todo`, `edit_todo`, `pencil_in`, `delete_todo`; read-only keys get `list_todos` only. See `worker/mcp.js`. |
 | `POST /join` `{code, name}` | none | Turn an invite into a board and token. |
 | `POST /invites` `{label, days}`, `GET /invites`, `DELETE /invites/<code>` | admin | Make, list and revoke invites. |
@@ -178,7 +185,20 @@ Every board response carries `X-Board` (the board id the app pins itself to), `X
 
 Settings > Sync > Advanced > **AI assistants** calls `POST /agents`, which makes an `na_` key stored only as `atok:<hash>` (with the board, a label, `read` or `write`, and the date), and shows `https://<worker>/mcp/na_…` once. Claude's custom connector screen has nowhere to put a header, so the key rides in the address; a header (`Authorization: Bearer na_…` on `POST /mcp`) works too. Agent keys open nothing but `/mcp`: `whoIs` refuses them everywhere else, so they can't read `/data` directly, share, invite, add devices or delete the board. At most 10 per board; deleting the board, or removing an owner's `TOKEN_*` secret, ends them.
 
+One key can open several boards on the same Worker. When the device keeps more than one board, the app shows **Boards it can open**; after `POST /agents` it calls `POST /agents/attach {key, name}` with each ticked board's own token, so adding a board needs both the key and that board's token. The key's record gains `also: [{board, name, kind, label}]` (its KV metadata holds only the ids, to stay under 1 KB), up to 12 boards in all. With more than one board, `initialize` lists them, each tool takes a `board` argument (an enum of the boards' names on the device, the first being the one the key was made on), and each result carries `board`. Tools that take a todo `id` look on each board in turn when no board is given. `GET /agents` on an added board lists the key with `home: false`, and `DELETE /agents/<id>` there, or deleting that board, only takes that board off the key.
+
 The app sends `X-Time-Zone` with each `PUT /data`, and the Worker keeps it as `tz` beside the board (not in settings), so `list_todos` and `check_off` use the person's own date. The tools follow the app's rules: steps go with their todo, the last step checks its todo, "Finished todos move to Done: Right away" archives a checked todo, and `pencil_in` refuses Now, Tomorrow, shared lists and steps.
+
+### Reading boards straight from KV
+
+Something else (a dashboard that totals todos across boards, say) can read the `now-and-then` namespace directly instead of going through the Worker. What it finds:
+
+- `board:<id>`: one board's own lists, todos and settings, plus `shared: [{sid, order, updatedAt}]` (the shared lists placed on it) and `tz`. `<id>` is the owner name (`nate`) or `b_<hex>` for an invited board.
+- `shared:s_<hex>`: one shared list, `{sid, list, todos, members: [{board, name}]}`. Its todos are **not** copied into the member boards. `GET /data` mixes them in for each member, but in KV they live only here.
+- `old:<id>`: Done todos finished more than 90 days ago, `{todos}`. `inbox:<id>`: quick adds and assistant changes from the last two days that every read folds into the board, `{todos}`; take the newer `updatedAt` per todo id when combining it with the board.
+- `tok:`, `dtok:`, `atok:`, `snap:`, `gone:` and the invite keys hold tokens, copies and markers, not todos.
+
+**Count each shared list once.** When several boards share a list, each member board lists the same `sid` in its `shared` array, but there is one `shared:<sid>` record. A dashboard that walks boards and follows their `shared` references should collect the `sid`s into a set first and read each shared list one time, or its todos will be counted once per member. To attribute a shared list to one board (for a per-board total), use its first member (`members[0]`, the person who shared it) or count it under every member but leave it out of the overall total. Skip todos with `deleted: true` (tombstones), and treat `archived: true` as Done.
 
 ### Costs and limits
 

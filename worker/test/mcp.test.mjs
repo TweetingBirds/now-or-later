@@ -229,3 +229,61 @@ test("a shared list's todos added by an assistant reach the other board", async 
   assert.deepEqual((await tool(e, agent, "list_todos", { list: "Groceries" })).value.lists[0].shared_with.length, 2);
   assert.match((await tool(e, agent, "pencil_in", { id: (await get(e, NATE)).todos.find(t => t.text === "bananas").id, date: "2099-01-01" })).error, /shared/);
 });
+
+test("one assistant can open several boards and pick one by name", async () => {
+  const e = env();
+  // Nate's own board, plus an invited board for one of his apps, on one device.
+  await call(e, "PUT", "/data", { token: NATE, body: { lists: LISTS, todos: [todo("a", "n", "milk")] } });
+  const inv = await (await call(e, "POST", "/invites", { token: NATE, body: {} })).json();
+  const quips = (await (await call(e, "POST", "/join", { body: { code: inv.code, name: "Quips" } })).json()).token;
+  await call(e, "PUT", "/data", { token: quips, body: { lists: LISTS.map(l => ({ ...l, id: "q" + l.id })), todos: [todo("q1", "ql", "ship 2.0")] } });
+  const agent = await (await call(e, "POST", "/agents", { token: NATE, body: { label: "Claude", scope: "write", board_name: "Home" } })).json();
+
+  // One board: no board argument at all.
+  let { body } = await rpc(e, agent, "tools/list");
+  assert.ok(!("board" in body.result.tools[0].inputSchema.properties));
+
+  // Adding a board needs the key itself and that board's own token.
+  assert.equal((await call(e, "POST", "/agents/attach", { token: quips, body: { key: "na_" + "x".repeat(43) } })).status, 404);
+  assert.equal((await call(e, "POST", "/agents/attach", { body: { key: agent.token } })).status, 401);
+  const at = await call(e, "POST", "/agents/attach", { token: quips, body: { key: agent.token, name: "quips" } });
+  assert.equal(at.status, 200);
+  assert.equal((await at.json()).boards, 2);
+  assert.ok(e.NOW_AND_THEN.m.get("atok:" + agent.id).meta.also.length === 1, "metadata keeps only ids");
+
+  ({ body } = await rpc(e, agent, "initialize", { protocolVersion: "2025-06-18" }));
+  assert.match(body.result.instructions, /2 boards.*Home, quips/);
+  ({ body } = await rpc(e, agent, "tools/list"));
+  assert.deepEqual(body.result.tools[0].inputSchema.properties.board.enum, ["Home", "quips"]);
+
+  // Default board is the one that made the key; board picks another.
+  assert.equal((await tool(e, agent, "list_todos")).value.board, "Home");
+  const q = (await tool(e, agent, "list_todos", { board: "Quips" })).value;
+  assert.equal(q.board, "quips");
+  assert.equal(q.lists[2].todos[0].text, "ship 2.0");
+  assert.match((await tool(e, agent, "list_todos", { board: "nope" })).error, /no board called "nope".*Home, quips/);
+  const add = await tool(e, agent, "add_todos", { board: "quips", text: "write release notes", list: "tomorrow" });
+  assert.equal(add.value.board, "quips");
+  assert.ok((await get(e, quips)).todos.some(t => t.text === "write release notes" && t.listId === "qtm"));
+  assert.ok(!(await get(e, NATE)).todos.some(t => t.text === "write release notes"));
+  // A todo id finds its own board without one.
+  const done = await tool(e, agent, "check_off", { id: "q1" });
+  assert.equal(done.value.board, "quips");
+  assert.ok((await get(e, quips)).todos.find(t => t.id === "q1").done);
+  assert.match((await tool(e, agent, "check_off", { id: "zzz" })).error, /no todo with that id/);
+
+  // Each board lists the key; removing it from the added board only takes that board off.
+  const fromQuips = (await (await call(e, "GET", "/agents", { token: quips })).json()).agents;
+  assert.equal(fromQuips.length, 1);
+  assert.equal(fromQuips[0].home, false);
+  assert.equal((await (await call(e, "DELETE", "/agents/" + agent.id, { token: quips })).json()).detached, true);
+  assert.equal((await rpc(e, agent, "ping")).status, 200);
+  ({ body } = await rpc(e, agent, "tools/list"));
+  assert.ok(!("board" in body.result.tools[0].inputSchema.properties));
+
+  // Deleting an added board takes it off the key; the key keeps working.
+  await call(e, "POST", "/agents/attach", { token: quips, body: { key: agent.token } });
+  assert.equal((await call(e, "DELETE", "/data?confirm=delete", { token: quips })).status, 200);
+  assert.equal((await rpc(e, agent, "ping")).status, 200);
+  assert.equal((await tool(e, agent, "list_todos")).value.board, undefined);
+});

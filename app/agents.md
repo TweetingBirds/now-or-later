@@ -82,6 +82,10 @@ A read-only connection gets only `list_todos`. A read-and-change connection gets
 
 A `list` argument takes a list's name (case doesn't matter) or a role: `now`, `tomorrow` or `later`.
 
+### Several boards
+
+One connection can open more than one board, when the person keeps several on their device and ticks them under **Boards it can open**. Then `initialize` names the boards in its instructions, every tool takes a `board` argument (an enum of their names), and every result says which `board` it came from. Without `board`, `list_todos` and `add_todos` use the first board (the one the connection was made on), and the tools that take an `id` find the todo on whichever board has it. Each board is a separate set of lists, so call `list_todos` with the board you mean before adding to it. With a single board there's no `board` argument at all.
+
 Agents can't create, rename, archive or delete lists, change settings, share lists, or reach backups. Those stay in the app.
 
 ## 4. Working with the lists

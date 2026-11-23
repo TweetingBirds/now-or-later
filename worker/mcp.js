@@ -6,7 +6,8 @@
 // plain JSON. The Worker keeps nothing between requests.
 //
 // Who's asking is an agent key ("na_..."), made in the app under Settings > Sync >
-// Advanced > AI assistants. Each key opens one board, can be read only or read and
+// Advanced > AI assistants. Each key opens one board (or several, when a device
+// that keeps several boards adds them: then every tool takes a board), can be read only or read and
 // change, and only ever works here: /data, sharing, invites, devices and deleting
 // the board all turn it away. The key goes in an Authorization header, or in the
 // address itself (/mcp/na_...) for apps whose connector screen has nowhere to put
@@ -114,6 +115,34 @@ export function dayIn(tz, d = new Date()) {
 }
 
 class ToolError extends Error {}
+class NoSuchTodo extends ToolError {} // so a tool can look on the key's other boards
+
+// The boards a key opens, each with a name an assistant can pass as `board`:
+// the name the device gave it, or the board's own name. Duplicates get a number.
+export function boardChoices(agent) {
+  const raw = Array.isArray(agent.boards) && agent.boards.length ? agent.boards : [{ board: agent.board, name: agent.name || "" }];
+  const seen = new Map();
+  return raw.map((b, i) => {
+    const base = String(b.label || b.name || (i === 0 ? "main" : b.board)).trim() || b.board;
+    const n = (seen.get(base.toLowerCase()) || 0) + 1;
+    seen.set(base.toLowerCase(), n);
+    return { board: b.board, name: n > 1 ? `${base} ${n}` : base };
+  });
+}
+function pickBoard(choices, wanted) {
+  const want = String(wanted).trim().toLowerCase();
+  const b = choices.find((x) => x.name.toLowerCase() === want) || choices.find((x) => x.board.toLowerCase() === want);
+  if (!b) throw new ToolError(`There's no board called "${wanted}". The boards are: ${choices.map((x) => x.name).join(", ")}.`);
+  return b;
+}
+// With more than one board, every tool gets a `board` argument naming them.
+function withBoard(tool, choices) {
+  if (choices.length < 2) return tool;
+  const usesId = tool.inputSchema.required && tool.inputSchema.required.includes("id");
+  const board = { type: "string", enum: choices.map((b) => b.name),
+    description: `Which board. Default: ${usesId ? "whichever board has that todo" : choices[0].name}.` };
+  return { ...tool, inputSchema: { ...tool.inputSchema, properties: { board, ...tool.inputSchema.properties } } };
+}
 
 // Helpers over a board as GET /data returns it (shared lists mixed in).
 function helpers(board) {
@@ -136,7 +165,10 @@ function helpers(board) {
   };
   const findTodo = (todoId) => {
     const t = live.find((x) => x.id === todoId);
-    if (!t) throw new ToolError(board.todos.some((x) => x.id === todoId && x.archived) ? "That todo is already in Done." : "There's no todo with that id. Call list_todos for the current ids.");
+    if (!t) {
+      if (board.todos.some((x) => x.id === todoId && x.archived)) throw new ToolError("That todo is already in Done.");
+      throw new NoSuchTodo("There's no todo with that id. Call list_todos for the current ids.");
+    }
     return t;
   };
   return { lists, live, listOf, parentOf, stepsOf, topIn, findList, findTodo };
@@ -274,8 +306,12 @@ const textResult = (value, isError = false) => ({
   ...(isError ? { isError: true } : { structuredContent: value }),
 });
 
-// store: { read() -> { board, tz }, save(todos) -> Promise }. agent: { scope, label, name }.
+// store: { read() -> { board, tz }, save(todos) -> Promise }, or a function that
+// takes a board id and returns one. agent: { scope, label, name, board, boards }.
 export async function handleRpc(msg, agent, store) {
+  const storeFor = typeof store === "function" ? store : () => store;
+  const choices = boardChoices(agent);
+  const many = choices.length > 1;
   if (!msg || msg.jsonrpc !== "2.0" || typeof msg.method !== "string") return rpcError(msg && msg.id !== undefined ? msg.id : null, -32600, "Invalid request");
   const rid = msg.id;
   const note = rid === undefined || rid === null; // a notification gets no answer
@@ -288,11 +324,12 @@ export async function handleRpc(msg, agent, store) {
         protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "now-or-later", title: "Now or Later", version: "1.0.0" },
-        instructions: INSTRUCTIONS + (agent.scope === "write" ? "" : "\nThis connection can only read the lists."),
+        instructions: INSTRUCTIONS + (agent.scope === "write" ? "" : "\nThis connection can only read the lists.") +
+          (many ? `\nThis connection opens ${choices.length} boards, each a separate set of lists: ${choices.map((b) => b.name).join(", ")}. Pass board to pick one. Without it, list_todos and add_todos use ${choices[0].name}, and the other tools find the todo by its id on any of them.` : ""),
       });
     }
     case "ping": return note ? null : ok(rid, {});
-    case "tools/list": return ok(rid, { tools: tools.map(({ read: _r, ...t }) => t) });
+    case "tools/list": return ok(rid, { tools: tools.map(({ read: _r, ...t }) => withBoard(t, choices)) });
     case "tools/call": {
       const name = String(params.name || "");
       const args = params.arguments && typeof params.arguments === "object" ? params.arguments : {};
@@ -300,12 +337,24 @@ export async function handleRpc(msg, agent, store) {
       if (!tool) return rpcError(rid, -32602, "Unknown tool: " + name);
       if (!tools.includes(tool)) return ok(rid, textResult("This connection can only read the lists. To let it make changes, make a new one in Settings > Sync > Advanced and choose \"Can read and change\".", true));
       try {
-        const { board, tz } = await store.read();
-        const today = dayIn(tz);
-        if (tool.read) return ok(rid, textResult(describe(board, today, args)));
-        const { changed, result } = change(name, args, board, today, board.settings);
-        if (changed.size) await store.save([...changed.values()]);
-        return ok(rid, textResult(result));
+        const named = many && args.board != null && String(args.board).trim() ? pickBoard(choices, args.board) : null;
+        // A todo id without a board: look on each board in turn.
+        const tries = named ? [named] : tool.read || name === "add_todos" ? [choices[0]] : choices;
+        const tag = (b, value) => (many ? { board: b.name, ...value } : value);
+        for (let i = 0; i < tries.length; i++) {
+          const b = tries[i], s = storeFor(b.board);
+          const { board, tz } = await s.read();
+          const today = dayIn(tz);
+          if (tool.read) return ok(rid, textResult(tag(b, describe(board, today, args))));
+          try {
+            const { changed, result } = change(name, args, board, today, board.settings);
+            if (changed.size) await s.save([...changed.values()]);
+            return ok(rid, textResult(tag(b, result)));
+          } catch (e) {
+            if (e instanceof NoSuchTodo && i < tries.length - 1) continue;
+            throw e;
+          }
+        }
       } catch (e) {
         if (e instanceof ToolError) return ok(rid, textResult(e.message, true));
         throw e;

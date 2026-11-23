@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <!-- Only this site's own scripts (and the theme line below, by its hash) run, and images and
        fonts load only from here and Google Fonts. Sync can talk to any https address. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-BJj+K9sKS70Nwqtm4n77TQc5rtRL3SyR9KbFGevlYcw='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Saxvq/TcU8hriSovvvqGCCxz7Luwroic45msN6sQqGg='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
   <meta name="referrer" content="same-origin">
   <title>Now or Later</title>
   <meta name="description" content="A notebook-style todo list: Now, Tomorrow, Later and Done.">
@@ -26,12 +26,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&family=Kalam:wght@400&family=Patrick+Hand&display=swap">
   <link rel="stylesheet" href="styles.css?v=__BUILD_NUMBER__">
   <!-- Apply a Light/Dark choice from Settings before first paint, so there's no flash. -->
-  <script>try{var o=JSON.parse(localStorage.getItem("nat.local.v1"))||{},d=document.documentElement.dataset;if(o.theme==="light"||o.theme==="dark")d.theme=o.theme;if(o.font==="neat"||o.font==="print")d.font=o.font;if(o.colors==="bold")d.colors="bold"}catch(e){}</script>
+  <script>try{var b=JSON.parse(localStorage.getItem("nat.boards.v1"))||{},o=JSON.parse(localStorage.getItem("nat.local.v1"+(/^[a-z0-9]{1,16}$/.test(b.current)?"@"+b.current:"")))||{},d=document.documentElement.dataset;if(o.theme==="light"||o.theme==="dark")d.theme=o.theme;if(o.font==="neat"||o.font==="print")d.font=o.font;if(o.colors==="bold")d.colors="bold"}catch(e){}</script>
 </head>
 <body>
   <header class="top">
     <div class="brand">
       <h1 class="wordmark">Now <span class="hand">or</span> Later</h1>
+      <!-- Only shows once this device keeps more than one board (Settings > Boards). -->
+      <button class="board-pick" id="boardPick" type="button" aria-haspopup="menu" aria-label="Switch board" hidden></button>
     </div>
     <div class="tools">
       <button class="sync" id="syncStatus" type="button" data-state="off" hidden>On this device</button>
@@ -111,6 +113,9 @@
           <div class="card">
             <button class="item nav" type="button" data-go="sync">
               <span class="item-text">Sync <small id="syncRowSub">Off. Your lists stay on this device.</small></span><svg class="chev" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+            </button>
+            <button class="item nav" type="button" data-go="boards">
+              <span class="item-text">Boards <small id="boardsRowSub">Keep more than one board on this device.</small></span><svg class="chev" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
             </button>
             <button class="item nav" type="button" data-go="backups">
               <span class="item-text">Backups <small id="backupRowSub">Download, restore and nightly copies.</small></span><svg class="chev" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
@@ -197,6 +202,9 @@
             </select>
             <button class="btn" type="button" id="agentMake">Connect an assistant</button>
           </div>
+          <fieldset class="agent-boards" id="agentBoards" hidden>
+            <legend>Boards it can open</legend>
+          </fieldset>
           <div class="restore-box" id="agentNew" hidden>
             <p>Paste this address into your assistant's connector settings. It's only shown now, and anyone who has it can reach your lists, so keep it private. Setting it up with an AI agent? Give it the address and <a href="agents.md" target="_blank" rel="noopener">now-or-later.app/agents.md</a>.</p>
             <input type="text" id="agentUrl" readonly aria-label="Address for the assistant" spellcheck="false">
@@ -235,6 +243,19 @@
           </div>
         </section>
         </details>
+      </div>
+
+      <!-- Boards page: the boards this device keeps, each with its own sync. -->
+      <div class="pane" data-pane="boards" data-title="Boards" hidden>
+        <section class="group">
+          <p>Each board is a whole notebook of its own, with its own lists and its own sync. Keep one for home and one for work, or one per project, and switch between them from the name at the top.</p>
+          <ul class="invite-list board-list" id="boardList"></ul>
+          <div class="row start invite-new">
+            <input type="text" id="boardNewName" placeholder="Name, like Work" maxlength="40" autocomplete="off" aria-label="Name for the new board">
+            <button class="btn" type="button" id="boardAdd">Add a board</button>
+          </div>
+          <p class="msg" id="boardMsg" role="status"></p>
+        </section>
       </div>
 
       <!-- Backups page: files on this device, and the Worker's nightly copies. -->
@@ -286,6 +307,7 @@
         <label class="field" id="joinNameRow">Name for your board (optional)
           <input type="text" id="joinName" maxlength="40" autocomplete="given-name" placeholder="For example, Sam">
         </label>
+        <label class="toggle join-keep" id="joinKeepRow" hidden><input type="checkbox" id="joinKeep" checked> <span id="joinKeepText">Keep this board too, and add the new one as another board</span></label>
         <p class="note" id="joinHost"></p>
         <div class="msg" id="joinMsg" role="status"></div>
         <div class="row">

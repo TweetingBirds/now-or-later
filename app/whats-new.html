@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <!-- Only this site's own scripts (and the theme line below, by its hash) run, and images and
        fonts load only from here and Google Fonts. Sync can talk to any https address. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-KDLNOaM82cb5CLFroEg340OseYTqlfehKiLytdTwKYo='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ZTV8rTMC1tcyIBYkOJwQs9VLIbpEIkvBbQgVyNP8x/c='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
   <meta name="referrer" content="same-origin">
   <title>What's New · Now or Later</title>
   <meta name="description" content="Every version of Now or Later and what changed.">
@@ -22,7 +22,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Atkinson+Hyperlegible:wght@400;700&family=Kalam:wght@400&display=swap">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="pages.css">
-  <script>try{var t=(JSON.parse(localStorage.getItem("nat.local.v1"))||{}).theme;if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+  <script>try{var b=JSON.parse(localStorage.getItem("nat.boards.v1"))||{},t=(JSON.parse(localStorage.getItem("nat.local.v1"+(/^[a-z0-9]{1,16}$/.test(b.current)?"@"+b.current:"")))||{}).theme;if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
 </head>
 <body class="page">
   <header class="page-top">
@@ -41,8 +41,17 @@
     <h1>What's New</h1>
     <p class="lede">Every version of Now or Later, newest first. To see which version this device is running, open Settings and look at the bottom of the About section.</p>
 
+    <article class="release" id="v1.29.0">
+      <h2>1.29 <time datetime="2026-11-23">November 23, 2026</time> <span class="tag">Latest</span></h2>
+      <ul>
+        <li><strong>More than one board.</strong> Keep a few boards on one device, say one for home and one for work, each with its own lists and its own sync. Add them in Settings, Boards, then switch from the board's name at the top. With just one board, nothing changes.</li>
+        <li><strong>Invite and device links</strong> on a device that already syncs can now add the new board beside the one you have, instead of replacing it.</li>
+        <li><strong>One AI assistant, several boards.</strong> When you connect an assistant, tick the other boards it may open, and it picks one by name.</li>
+      </ul>
+    </article>
+
     <article class="release" id="v1.28.0">
-      <h2>1.28 <time datetime="2026-11-12">November 12, 2026</time> <span class="tag">Latest</span></h2>
+      <h2>1.28 <time datetime="2026-11-12">November 12, 2026</time></h2>
       <ul>
         <li><strong>AI assistants.</strong> Connect Claude, or another assistant that speaks MCP, to read your lists and, if you allow it, add, check off, move and pencil in todos for you. Find it in Settings, Sync, Advanced. <a href="support.html#assistants">How to set it up</a>.</li>
       </ul>

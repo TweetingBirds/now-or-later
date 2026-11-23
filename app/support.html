@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <!-- Only this site's own scripts (and the theme line below, by its hash) run, and images and
        fonts load only from here and Google Fonts. Sync can talk to any https address. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-KDLNOaM82cb5CLFroEg340OseYTqlfehKiLytdTwKYo='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ZTV8rTMC1tcyIBYkOJwQs9VLIbpEIkvBbQgVyNP8x/c='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https:; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
   <meta name="referrer" content="same-origin">
   <title>Support · Now or Later</title>
   <meta name="description" content="Help with Now or Later: frequently asked questions and how to get in touch.">
@@ -22,7 +22,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Atkinson+Hyperlegible:wght@400;700&family=Kalam:wght@400&display=swap">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="pages.css">
-  <script>try{var t=(JSON.parse(localStorage.getItem("nat.local.v1"))||{}).theme;if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+  <script>try{var b=JSON.parse(localStorage.getItem("nat.boards.v1"))||{},t=(JSON.parse(localStorage.getItem("nat.local.v1"+(/^[a-z0-9]{1,16}$/.test(b.current)?"@"+b.current:"")))||{}).theme;if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
 </head>
 <body class="page">
   <header class="page-top">
@@ -165,6 +165,7 @@
           </ul>
           <p>Then ask things like "What's on my list for today?", "Add milk and eggs to Now", "Move the dentist to Tomorrow" or "Pencil in renewing my passport for March 3". An assistant that can change your lists can add, check off, move, rewrite, pencil in and delete todos. It can't rename or delete lists, share them, or touch your sync settings. Its changes show up in the app at the next sync, like edits from another device, and the nightly backups cover them too.</p>
           <p><strong>Setting it up with an AI agent?</strong> Give it the address and point it to <a href="agents.md">now-or-later.app/agents.md</a>, which has the setup steps for each kind of app and what every tool does.</p>
+          <p>Keep more than one board on this device? <strong>Boards it can open</strong> lists the others that sync through the same service. Tick the ones the assistant may use, and you can ask it things like "Add a todo to my work board". Removing it on one of those boards takes only that board away from it.</p>
           <p>Anyone who has the address can reach your lists, so keep it private. To stop an assistant, tap <strong>Remove</strong> next to it in the same place.</p>
         </div>
       </details>
@@ -176,6 +177,15 @@
         <div>
           <p>Sync is optional. Without it, your lists stay on the device you're using. The easiest way to start is an <strong>invite link</strong> from whoever runs the sync service. Open it, pick a name for your lists if you like, and tap <strong>Join</strong>. The lists already on that device come along.</p>
           <p>You can also open Settings, then <strong>Sync</strong>, then <strong>Set up by hand</strong>, paste a sync address and access token, and tap <strong>Save and sync</strong>.</p>
+        </div>
+      </details>
+
+      <details id="boards">
+        <summary>Can I keep separate boards, like one for home and one for work?</summary>
+        <div>
+          <p>Yes. Open Settings, then <strong>Boards</strong>, type a name and tap <strong>Add a board</strong>. The new board opens with empty Now, Tomorrow and Later lists, and Sync opens so you can connect it, or leave it on this device. Once there's more than one, the open board's name shows at the top next to Now or Later. Tap it to switch.</p>
+          <p>Each board has its own lists, its own sync and its own warnings, like a separate notebook. Your look and feel choices apply to all of them. Opening an invite or device link on a device that already syncs offers to add that board beside yours instead of replacing it.</p>
+          <p><strong>Remove</strong> in Settings, Boards takes a board off this device only. If it syncs, it's still on the sync service and your other devices.</p>
         </div>
       </details>
 

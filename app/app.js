@@ -9,16 +9,41 @@
 
   // APP_VERSION is bumped by hand for notable releases. The BUILD_* values are
   // stamped by the GitHub Pages workflow on every deploy (left as-is locally).
-  const APP_VERSION = "1.28.0";
+  const APP_VERSION = "1.29.0";
   const BUILD_NUMBER = "__BUILD_NUMBER__";
   const BUILD_SHA = "__BUILD_SHA__";
   const BUILD_DATE = "__BUILD_DATE__";
   const STAMPED = !BUILD_NUMBER.startsWith("__");
 
-  const BOARD_KEY = "nat.board.v1";
-  const LOCAL_KEY = "nat.local.v1"; // per-device: lastDay, sync settings
-  const SYNCED_KEY = "nat.synced.v1"; // per-device: updatedAt of each item as the Worker last had it
-  const OLD_KEY = "nat.old.v1"; // Done todos finished more than OLD_DAYS ago (see packOld)
+  // ---------- boards on this device ----------
+  // A device can keep several boards (say one per app or area of work), each with
+  // its own token, sync state and "different board" check. Each one is a "slot"
+  // with its own copy of the keys below; the first slot ("main") uses the plain
+  // names, so a device with one board is exactly as it was. nat.boards.v1 says
+  // which slot is open: { current, slots: [{ id, label }] }. It only exists once a
+  // second board is added. Switching saves the slot and reloads the page into the
+  // other one, so nothing from one board can leak into the next.
+  const BOARDS_KEY = "nat.boards.v1";
+  const MAX_SLOTS = 12;
+  const slotKeys = (id) => {
+    const s = id === "main" ? "" : "@" + id;
+    return { board: "nat.board.v1" + s, local: "nat.local.v1" + s, synced: "nat.synced.v1" + s, old: "nat.old.v1" + s };
+  };
+  function readSlots() {
+    let r = null;
+    try { r = JSON.parse(localStorage.getItem(BOARDS_KEY)); } catch (e) {}
+    if (!r || !Array.isArray(r.slots) || !r.slots.length) r = { current: "main", slots: [{ id: "main", label: "" }] };
+    r.slots = r.slots.filter(x => x && typeof x.id === "string" && /^(main|[a-z0-9]{1,16})$/.test(x.id));
+    if (!r.slots.length) r.slots = [{ id: "main", label: "" }];
+    if (!r.slots.some(x => x.id === r.current)) r.current = r.slots[0].id;
+    return r;
+  }
+  const SLOT = readSlots().current;
+  const KEYS = slotKeys(SLOT);
+  const BOARD_KEY = KEYS.board;
+  const LOCAL_KEY = KEYS.local; // per-device: lastDay, sync settings
+  const SYNCED_KEY = KEYS.synced; // per-device: updatedAt of each item as the Worker last had it
+  const OLD_KEY = KEYS.old; // Done todos finished more than OLD_DAYS ago (see packOld)
   const OLD_DAYS = core.OLD_DAYS;
   const DONE_PAGE = 100; // Done rows drawn at first; "Show more" adds more
   const MAX_LISTS = 10;
@@ -58,7 +83,12 @@
   // still shows, but would be gone after a reload, so say so instead of failing quietly.
   let storageWarned = 0, storageFailed = false;
   const write = (k, v) => {
-    try { localStorage.setItem(k, JSON.stringify(v)); if (k === BOARD_KEY) storageFailed = false; return true; }
+    try {
+      localStorage.setItem(k, JSON.stringify(v));
+      if (k === BOARD_KEY) storageFailed = false;
+      if (k === LOCAL_KEY) shareDevicePrefs();
+      return true;
+    }
     catch (e) {
       if (k === BOARD_KEY) storageFailed = true;
       if (Date.now() - storageWarned > 10 * 60_000) { storageWarned = Date.now(); setTimeout(() => warnStorage(k), 0); }
@@ -66,13 +96,28 @@
     }
   };
 
+  // Theme, writing, colors and the like belong to the device, not to a board, so
+  // every board on it keeps the same ones.
+  const DEVICE_PREFS = ["theme", "font", "colors", "keysAlt", "seenVersion"];
+  function shareDevicePrefs() {
+    if (!localStorage.getItem(BOARDS_KEY)) return;
+    for (const x of readSlots().slots) {
+      if (x.id === SLOT) continue;
+      const k = slotKeys(x.id).local, o = read(k);
+      if (!o || DEVICE_PREFS.every(p => o[p] === local[p])) continue;
+      for (const p of DEVICE_PREFS) o[p] = local[p];
+      try { localStorage.setItem(k, JSON.stringify(o)); } catch (e) {}
+    }
+  }
+
   let local = Object.assign({ lastDay: null, syncUrl: "", syncToken: "", pristine: false, synced: false, board: "", boardName: "", boardKind: "", admin: false, switching: false, otherBoard: "", theme: "system", font: "hand", colors: "soft", keysAlt: false, sentAt: 0 }, read(LOCAL_KEY) || {});
   const looksLikeBoard = (b) => !!b && typeof b === "object" && Array.isArray(b.lists) && Array.isArray(b.todos);
   let board = read(BOARD_KEY);
   let recovered = "";
   if (!looksLikeBoard(board)) {
     const damaged = localStorage.getItem(BOARD_KEY) !== null;
-    board = starterBoard(); local.pristine = true;
+    // A board added from Settings > Boards starts with the three lists and nothing on them.
+    board = starterBoard(!damaged && SLOT !== "main"); local.pristine = true;
     if (local.synced && local.syncUrl && local.syncToken) {
       // The saved lists went missing or got damaged (a browser can lose storage) on a
       // device that syncs. Load the synced board as it is, the way switching boards
@@ -80,9 +125,10 @@
       local.synced = false; local.switching = true; recovered = "synced";
     } else if (damaged) {
       recovered = "local";
-    } else {
+    } else if (local.welcome !== "done") {
       // A device with no lists yet is a first visit: it gets the welcome (see showWelcome).
       // Devices that already had lists never have welcome set, so they never see it.
+      // A second board on a device that's had its welcome doesn't get it again.
       local.welcome = "pending";
     }
     write(LOCAL_KEY, local);
@@ -95,7 +141,7 @@
   let serverSeen = read(SYNCED_KEY);
   if (!serverSeen) { serverSeen = local.synced ? stampsOf(board) : { lists: {}, todos: {}, settings: 0 }; write(SYNCED_KEY, serverSeen); }
 
-  function starterBoard() {
+  function starterBoard(plain = false) {
     const t = now();
     const ids = { now: uid(), tom: uid(), later: uid() };
     const todo = (text, listId, order) => ({ id: uid(), text, listId, order, done: false, doneDay: null, archived: false, updatedAt: t });
@@ -107,7 +153,7 @@
         { id: ids.tom, name: "Tomorrow", color: "#7b9cff", role: "tomorrow", order: 2, updatedAt: t },
         { id: ids.later, name: "Later", color: "#5cc6a7", role: "later", order: 3, updatedAt: t },
       ],
-      todos: [
+      todos: plain ? [] : [
         todo("Tap a list name to rename it", ids.now, 1),
         todo("Drag me by the handle to another list", ids.now, 2),
         todo("Things for tomorrow go here", ids.tom, 1),
@@ -377,6 +423,8 @@
     local.board = id; local.boardName = name;
     local.boardKind = res.headers.get("X-Board-Kind") || (isInvited(id) ? "invited" : "owner");
     local.admin = res.headers.get("X-Board-Admin") === "1";
+    // An unnamed board in the switcher goes by the synced board's name.
+    if (!document.getElementById("boardPick").hidden) setTimeout(showBoardPick, 0);
   }
   // 410: this device's board was deleted (from another device, or by the Worker's
   // owner on request). Turn sync off here and keep the lists that are on screen.
@@ -1968,6 +2016,141 @@
     return [local.board ? `Syncing with ${boardLabel(local.board)}.` : "", lastSyncedText() + ".",
       n ? `${plural(n, "change")} on this device ${n === 1 ? "hasn't" : "haven't"} synced yet.` : ""].filter(Boolean).join(" ");
   }
+  // ---------- boards on this device (see slotKeys at the top) ----------
+  const slotList = () => readSlots().slots;
+  function saveSlots(change) {
+    const r = readSlots(); change(r);
+    try { localStorage.setItem(BOARDS_KEY, JSON.stringify(r)); return true; } catch (e) { warnStorage(BOARD_KEY); return false; }
+  }
+  const localOf = (id) => (id === SLOT ? local : read(slotKeys(id).local) || {});
+  const cleanLabel = (s) => String(s || "").replace(/[\u0000-\u001f<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
+  // A board's name on this device: what it was called here, else the synced
+  // board's own name, else its place in the list.
+  function slotName(x, i = slotList().findIndex(y => y.id === x.id)) {
+    if (x.label) return x.label;
+    const l = localOf(x.id);
+    const own = l.board ? firstName(l.boardName || (isInvited(l.board) ? "" : l.board)) : "";
+    if (own) return own + "'s board";
+    return i <= 0 ? "My board" : "Board " + (i + 1);
+  }
+  const currentSlot = () => slotList().find(x => x.id === SLOT) || { id: SLOT, label: "" };
+  function slotSub(x) {
+    const l = localOf(x.id);
+    if (!(l.syncUrl && l.syncToken)) return "On this device only";
+    if (l.otherBoard) return "Sync problem: its token opens a different board";
+    if (!l.synced) return "Not synced yet";
+    return l.lastSyncAt ? "Synced " + new Date(l.lastSyncAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + clock(l.lastSyncAt) : "Syncs";
+  }
+  // The name at the top, next to the wordmark, once there's more than one board.
+  const boardPick = document.getElementById("boardPick");
+  function showBoardPick() {
+    const many = slotList().length > 1, name = slotName(currentSlot());
+    boardPick.hidden = !many;
+    boardPick.replaceChildren(el("span", { class: "board-pick-name" }, name));
+    boardPick.setAttribute("aria-label", `Board: ${name}. Switch board`);
+    document.title = many ? `${name} · Now or Later` : "Now or Later";
+    const sub = document.getElementById("boardsRowSub");
+    if (sub) sub.textContent = many ? `${slotList().length} on this device · ${name} is open` : "Keep more than one board on this device.";
+  }
+  boardPick.dataset.popTrigger = "";
+  boardPick.addEventListener("click", () => {
+    if (openPop && popTrigger === boardPick) { closePop(true); return; }
+    const all = slotList();
+    popAt(boardPick, boardPick,
+      el("div", { class: "lbl" }, "Boards"),
+      all.map((x, i) => el("button", { class: "item check-item", role: "menuitemradio", "aria-checked": String(x.id === SLOT),
+        onclick: () => { closePop(); switchBoard(x.id); } }, slotName(x, i))),
+      el("button", { class: "item", onclick: () => { closePop(); openSettingsTo("boards"); } }, "Manage boards…"));
+  });
+  // Saves this board, sends its unsynced edits up first (so they reach other
+  // devices while it isn't open), and reloads into the other one.
+  let switchingTo = "";
+  async function switchBoard(id, after = "") {
+    if (id === SLOT || switchingTo) return;
+    switchingTo = id;
+    if (syncConfigured() && !local.otherBoard && navigator.onLine && (pushTimer || pendingChanges().length)) {
+      clearTimeout(pushTimer); pushTimer = null;
+      for (let i = 0; syncing && i < 20; i++) await new Promise(r => setTimeout(r, 200));
+      await Promise.race([sync(), new Promise(r => setTimeout(r, 4000))]);
+    }
+    write(BOARD_KEY, board); write(LOCAL_KEY, local);
+    if (!saveSlots(r => { r.current = id; })) { switchingTo = ""; return; }
+    try { sessionStorage.setItem("nat.switched", JSON.stringify({ to: id, after })); } catch (e) {}
+    location.reload();
+  }
+  // After a switch: say where we are, and open Sync for a board that was just added.
+  function afterSwitch() {
+    let s = null;
+    try { s = JSON.parse(sessionStorage.getItem("nat.switched")); sessionStorage.removeItem("nat.switched"); } catch (e) {}
+    if (!s || s.to !== SLOT) return;
+    if (s.after === "sync") { openSettingsTo("sync"); toast(`${slotName(currentSlot())} is ready. Connect it to sync here, or leave it on this device.`, 6000); }
+    else toast(`Switched to ${slotName(currentSlot())}.`, 2500);
+  }
+  // Makes an empty slot (with this device's look) and returns its id. `preset`
+  // can carry a sync address and token from a link.
+  function addSlot(label, preset = {}) {
+    const all = slotList();
+    if (all.length >= MAX_SLOTS) throw new Error(`This device already keeps ${MAX_SLOTS} boards. Remove one first.`);
+    // The board that's open gets a name too, so the switcher can tell them apart.
+    if (all.length === 1 && !all[0].label) saveSlots(r => { r.slots[0].label = slotName(all[0], 0); });
+    let id;
+    do id = Math.random().toString(36).slice(2, 10); while (all.some(x => x.id === id));
+    const prefs = {};
+    for (const p of DEVICE_PREFS) if (local[p] !== undefined) prefs[p] = local[p];
+    try { localStorage.setItem(slotKeys(id).local, JSON.stringify({ ...prefs, welcome: "done", pristine: true, ...preset })); }
+    catch (e) { throw new Error("This device is out of storage space."); }
+    if (!saveSlots(r => { r.slots.push({ id, label: cleanLabel(label) }); })) throw new Error("This device is out of storage space.");
+    return id;
+  }
+  const boardMsg = (text, bad) => { const m = document.getElementById("boardMsg"); m.className = bad ? "msg bad" : "msg"; m.textContent = text; };
+  function renderBoards() {
+    const ul = document.getElementById("boardList"), all = slotList();
+    ul.replaceChildren(...all.map((x, i) => {
+      const name = el("span", { class: "board-name" }, el("strong", {}, slotName(x, i)), " ", el("small", {}, x.id === SLOT ? "Open now · " + slotSub(x) : slotSub(x)));
+      const rename = el("button", { class: "btn", type: "button", "aria-label": "Rename " + slotName(x, i), onclick: () => {
+        const input = el("input", { type: "text", maxlength: "40", value: x.label || slotName(x, i), "aria-label": "Board name" });
+        let finished = false;
+        const done = (keep) => {
+          if (finished) return; finished = true;
+          if (keep) { const v = cleanLabel(input.value); saveSlots(r => { const y = r.slots.find(z => z.id === x.id); if (y) y.label = v; }); }
+          renderBoards(); showBoardPick();
+        };
+        input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); done(true); } if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); } });
+        input.addEventListener("blur", () => done(true), { once: true });
+        name.replaceWith(input); input.focus(); input.select();
+      } }, "Rename");
+      const open = x.id === SLOT ? null : el("button", { class: "btn", type: "button", onclick: () => switchBoard(x.id) }, "Open");
+      const remove = x.id === SLOT ? null : el("button", { class: "btn danger", type: "button", onclick: () => removeSlot(x) }, "Remove");
+      return el("li", {}, name, el("span", { class: "board-btns" }, open, rename, remove));
+    }));
+    document.getElementById("boardAdd").disabled = all.length >= MAX_SLOTS;
+  }
+  async function removeSlot(x) {
+    const l = localOf(x.id), name = slotName(x);
+    const synced = !!(l.syncUrl && l.syncToken && l.synced);
+    const yes = await ask({
+      title: `Remove ${name} from this device?`,
+      text: synced
+        ? "Its lists stay on the sync service and on your other devices. To bring it back here, use Copy link for another device on one of them."
+        : "It doesn't sync, so its lists are only on this device, and removing it erases them. Open it and download a backup first if you might want them.",
+      yes: "Remove", danger: true,
+    });
+    if (!yes) return;
+    for (const k of Object.values(slotKeys(x.id))) localStorage.removeItem(k);
+    saveSlots(r => { r.slots = r.slots.filter(y => y.id !== x.id); });
+    boardMsg(`${name} was removed from this device.`);
+    renderBoards(); showBoardPick();
+  }
+  document.querySelector('[data-go="boards"]').addEventListener("click", () => { boardMsg(""); renderBoards(); });
+  document.getElementById("boardNewName").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("boardAdd").click(); } });
+  document.getElementById("boardAdd").addEventListener("click", () => {
+    const input = document.getElementById("boardNewName");
+    let id;
+    try { id = addSlot(input.value || "Board " + (slotList().length + 1)); } catch (e) { boardMsg(e.message, true); return; }
+    input.value = "";
+    switchBoard(id, "sync");
+  });
+
   // Tapping the badge syncs now. On a phone there's no hover, so it also says what's wrong.
   document.getElementById("syncStatus").addEventListener("click", async () => {
     if (!syncConfigured()) { openSettingsTo("sync"); return; }
@@ -2116,15 +2299,38 @@
   // (POST /mcp/<key>), read only or read and change. The address is shown once.
   const agentMsg = document.getElementById("agentMsg");
   const agentSay = (text, bad) => { agentMsg.className = "msg device-msg " + (bad ? "bad" : "ok"); agentMsg.textContent = text; };
+  // Other boards on this device that sync with the same Worker can be added to a
+  // new connection, so one assistant can work across them and pick a board by name.
+  const otherSyncedSlots = () => slotList().filter(x => {
+    if (x.id === SLOT) return false;
+    const l = localOf(x.id);
+    return l.syncUrl && l.syncToken && l.synced && !l.otherBoard && l.syncUrl.replace(/\/+$/, "") === workerBase();
+  });
+  function showAgentBoards() {
+    const box = document.getElementById("agentBoards"), others = otherSyncedSlots();
+    box.hidden = !others.length;
+    box.replaceChildren(el("legend", {}, "Boards it can open"),
+      el("label", { class: "toggle" }, el("input", { type: "checkbox", checked: true, disabled: true }), " " + slotName(currentSlot())),
+      ...others.map(x => el("label", { class: "toggle" }, el("input", { type: "checkbox", "data-slot": x.id }), " " + slotName(x))));
+  }
+  async function attachAgent(key, x) {
+    const l = localOf(x.id);
+    const res = await fetch(l.syncUrl.replace(/\/+$/, "") + "/agents/attach", { method: "POST", cache: "no-store",
+      headers: { "Authorization": "Bearer " + l.syncToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ key, name: slotName(x) }) });
+    if (!res.ok) throw new Error(answered(res.status));
+  }
   async function loadAgents() {
+    showAgentBoards();
     const ul = document.getElementById("agentList");
     try {
       const { agents } = await syncApi("/agents");
       ul.replaceChildren(...agents.map(a => el("li", {},
-        el("span", {}, `${a.label} · ${a.scope === "write" ? "can read and change" : "can only read"} · added ${shortDate(a.created)}`),
+        el("span", {}, `${a.label} · ${a.scope === "write" ? "can read and change" : "can only read"} · added ${shortDate(a.created)}` +
+          (a.home === false ? " · connected from another board" : a.boards > 1 ? ` · opens ${a.boards} boards` : "")),
         el("button", { class: "btn danger", type: "button", onclick: async (ev) => {
           ev.currentTarget.disabled = true;
-          try { await syncApi("/agents/" + encodeURIComponent(a.id), { method: "DELETE" }); agentSay(`Removed. ${a.label} can't reach your lists anymore.`); loadAgents(); }
+          try { await syncApi("/agents/" + encodeURIComponent(a.id), { method: "DELETE" }); agentSay(a.home === false ? `Removed. ${a.label} can't reach this board anymore.` : `Removed. ${a.label} can't reach your lists anymore.`); loadAgents(); }
           catch (e) { agentSay("Couldn't remove it: " + e.message, true); }
         } }, "Remove"))));
     } catch (e) { ul.replaceChildren(); agentSay(/404|needs an update/.test(e.message) ? "This sync service needs an update before assistants can connect." : e.message, true); }
@@ -2133,12 +2339,18 @@
     const btn = ev.currentTarget, label = document.getElementById("agentLabel");
     btn.disabled = true;
     try {
-      const made = await syncApi("/agents", { method: "POST", body: JSON.stringify({ label: label.value.trim(), scope: document.getElementById("agentScope").value }) });
+      const many = slotList().length > 1;
+      const made = await syncApi("/agents", { method: "POST", body: JSON.stringify({ label: label.value.trim(), scope: document.getElementById("agentScope").value,
+        ...(many ? { board_name: slotName(currentSlot()) } : {}) }) });
       label.value = "";
+      const extra = [...document.querySelectorAll("#agentBoards input[data-slot]:checked")].map(i => slotList().find(x => x.id === i.dataset.slot)).filter(Boolean);
+      const missed = [];
+      for (const x of extra) { try { await attachAgent(made.token, x); } catch (e) { missed.push(slotName(x)); } }
       document.getElementById("agentUrl").value = made.url;
       document.getElementById("agentNew").hidden = false;
       agentMsg.textContent = "";
       loadAgents();
+      if (extra.length) agentSay(missed.length ? `It can open ${slotName(currentSlot())}${extra.length > missed.length ? " and some of the others" : ""}, but adding ${missed.join(", ")} didn't work. Make a new one to try again.` : `It can open ${[currentSlot(), ...extra].map(x => slotName(x)).join(", ")}. Your assistant picks one by name.`, !!missed.length);
     } catch (e) { agentSay("Couldn't connect one: " + (e instanceof TypeError ? "the sync service can't be reached." : e.message), true); }
     finally { btn.disabled = false; }
   });
@@ -2241,10 +2453,18 @@
     const what = join
       ? "You've been invited to sync Now or Later. Joining makes a board of your own, so your lists are saved and show up on your other devices."
       : "This link connects this device to an existing board, so it shows the same lists as your other devices.";
+    // A device that already syncs can keep its board and add this one beside it
+    // (Settings > Boards), or swap. Keeping both is the default: nothing is lost.
+    const keepRow = document.getElementById("joinKeepRow");
+    keepRow.hidden = !had || slotList().length >= MAX_SLOTS;
     let keep = "";
-    if (join) keep = " The lists on this device go onto your new board." + (had ? ` This device stops syncing with ${boardLabel(local.board)}.` : "");
-    else if (had) keep = ` This device stops syncing with ${boardLabel(local.board)} and shows that board instead.`;
-    else if (!local.pristine) keep = " Lists on this device are added to that board.";
+    if (join) keep = had && !keepRow.hidden ? "" : " The lists on this device go onto your new board." + (had ? ` This device stops syncing with ${boardLabel(local.board)}.` : "");
+    else if (had && keepRow.hidden) keep = ` This device stops syncing with ${boardLabel(local.board)} and shows that board instead.`;
+    else if (!had && !local.pristine) keep = " Lists on this device are added to that board.";
+    document.getElementById("joinKeep").checked = true;
+    document.getElementById("joinKeepText").textContent = join
+      ? `Keep ${slotName(currentSlot())} on this device too, and add the new board beside it. Unchecked, this device's lists move to the new board and stop syncing with ${boardLabel(local.board)}.`
+      : `Keep ${slotName(currentSlot())} on this device too, and add this board beside it. Unchecked, this device stops syncing with ${boardLabel(local.board)} and shows that board instead.`;
     document.getElementById("joinTitle").textContent = join ? "Join Now or Later sync" : "Connect this device";
     document.getElementById("joinWhat").textContent = what + keep;
     document.getElementById("joinNameRow").hidden = !join;
@@ -2260,6 +2480,7 @@
   // sync turned on with the same Worker first.
   function showShareLink(host) {
     const same = canUseShared() && workerBase() === pendingLink.sync;
+    document.getElementById("joinKeepRow").hidden = true;
     document.getElementById("joinTitle").textContent = "Add a shared list";
     document.getElementById("joinWhat").textContent = same
       ? `Someone shared a list with you. It goes onto ${boardLabel(local.board)}, and changes either of you make show up for both. The rest of your board stays private.`
@@ -2304,6 +2525,7 @@
     document.getElementById("joinWhat").textContent = msg.textContent;
     msg.textContent = ""; document.getElementById("joinHost").textContent = "";
     document.getElementById("joinNameRow").hidden = true;
+    document.getElementById("joinKeepRow").hidden = true;
     const go = document.getElementById("joinGo");
     go.textContent = "Done"; go.disabled = false; go.hidden = false;
     document.getElementById("joinNo").hidden = true;
@@ -2320,6 +2542,14 @@
     if (link.share) return addSharedList(link, document.getElementById("joinMsg"), document.getElementById("joinGo"));
     const msg = document.getElementById("joinMsg"), go = document.getElementById("joinGo");
     msg.className = "msg"; msg.textContent = link.join ? "Joining…" : "Connecting…"; go.disabled = true;
+    const asNew = !document.getElementById("joinKeepRow").hidden && document.getElementById("joinKeep").checked;
+    // As another board: the token goes into a new slot, and the page opens it.
+    const intoNewBoard = (token, label) => {
+      const id = addSlot(label, { syncUrl: link.sync, syncToken: token });
+      pendingLink = null;
+      msg.textContent = "Opening it…";
+      switchBoard(id);
+    };
     try {
       let token = link.connect;
       if (link.device) {
@@ -2330,6 +2560,7 @@
         token = (await res.json()).token;
         // The code is used up; if the sync below fails, trying again uses the token.
         link.connect = token; link.device = null;
+        if (asNew) return intoNewBoard(token, "");
         useSync(link.sync, token);
       } else if (link.join) {
         const res = await fetch(link.sync + "/join", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -2338,10 +2569,12 @@
         if (res.status === 503) throw new Error("This sync service is full right now. Ask whoever invited you.");
         if (!res.ok) throw new Error(answered(res.status));
         token = (await res.json()).token;
+        if (asNew) { link.connect = token; link.join = null; return intoNewBoard(token, document.getElementById("joinName").value); }
         // A brand-new board is empty: this device's lists become its first contents.
         useSync(link.sync, token);
         local.switching = false; write(LOCAL_KEY, local);
       } else {
+        if (asNew) return intoNewBoard(token, "");
         useSync(link.sync, token);
       }
       const result = await sync();
@@ -3083,7 +3316,9 @@
   // keep localStorage per address, so a small Worker at the old address (mover/ in
   // the repo) packs that device's storage into #move=<payload> and sends it here.
   // The payload sits after the #, so it never reaches a server.
-  const MOVE_KEYS = [BOARD_KEY, LOCAL_KEY, SYNCED_KEY];
+  // The old address only ever had one board, under the plain key names.
+  const MAIN_KEYS = slotKeys("main");
+  const MOVE_KEYS = [[MAIN_KEYS.board, BOARD_KEY], [MAIN_KEYS.local, LOCAL_KEY], [MAIN_KEYS.synced, SYNCED_KEY]];
   async function readMovePayload(str) {
     const kind = str.slice(0, 2);
     const bytes = Uint8Array.from(atob(str.slice(2).replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
@@ -3092,7 +3327,7 @@
     else if (kind === "j.") text = new TextDecoder().decode(bytes);
     else throw new Error("unknown move format");
     const data = JSON.parse(text);
-    if (!data || data.v !== 1 || !data.keys || !looksLikeBoard(JSON.parse(data.keys[BOARD_KEY]))) throw new Error("nothing to move");
+    if (!data || data.v !== 1 || !data.keys || !looksLikeBoard(JSON.parse(data.keys[MAIN_KEYS.board]))) throw new Error("nothing to move");
     return data.keys;
   }
   async function readMove() {
@@ -3101,10 +3336,10 @@
     history.replaceState(null, "", location.pathname + location.search);
     let keys;
     try { keys = await readMovePayload(str); } catch (e) { toast("Your lists didn't come through from the old address. Download a backup there and restore it here.", 8000); return false; }
-    const theirs = JSON.parse(keys[LOCAL_KEY] || "{}");
+    const theirs = JSON.parse(keys[MAIN_KEYS.local] || "{}");
     if (theirs.syncToken && theirs.syncToken === local.syncToken && theirs.syncUrl === local.syncUrl) { toast("Your lists are already here.", 4000); return false; }
     if (!local.pristine && !confirm("Replace the lists on this device with the ones from the old address? The lists here now will be lost unless they're synced.")) return false;
-    for (const k of MOVE_KEYS) if (keys[k] != null) localStorage.setItem(k, keys[k]);
+    for (const [from, to] of MOVE_KEYS) if (keys[from] != null) localStorage.setItem(to, keys[from]);
     location.reload();
     return true;
   }
@@ -3120,7 +3355,8 @@
   // A new morning waits for the synced board first (see checkDay).
   checkDay().then(sync);
   checkForUpdate();
-  readMove().then((moving) => { if (!moving) { quickAdd(); readLink(); maybeWelcome(); } });
+  showBoardPick();
+  readMove().then((moving) => { if (!moving) { quickAdd(); readLink(); maybeWelcome(); afterSwitch(); } });
   if (recovered === "synced") toast("This device's lists couldn't be read, so they're being loaded from sync.", 6000);
   else if (recovered === "local") toast("This device's lists couldn't be read. Restore a backup from Settings if you have one.", 8000);
 })();

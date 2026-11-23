@@ -54,7 +54,11 @@
 // and delete todos. It takes agent keys ("na_", stored as "atok:<hash>"), which
 // work nowhere else. POST /agents { label, scope: "read" | "write" } makes one
 // (the key is shown once), GET /agents lists them and DELETE /agents/<id> removes
-// one. Deleting a board removes them too.
+// one. Deleting a board removes them too. A key can open more boards than the one
+// that made it: POST /agents/attach { key, name }, sent with another board's own
+// token, adds that board (for a device that keeps several boards, one per app or
+// area), and the MCP tools then take a board name. That board's DELETE
+// /agents/<id> takes it off the key again.
 //
 // Backups: once a day (the cron trigger in wrangler.toml) the Worker copies every
 // board to a snapshot key "snap:<board>:<ISO time>" that KV deletes by itself after
@@ -104,6 +108,7 @@ const NAME_MAX = 100;      // characters in a list name
 const DEVICE_ID = /^[a-f0-9]{64}$/;
 const AGENT_TOKEN = /^na_[A-Za-z0-9_-]{43}$/;
 const MAX_AGENTS = 10;     // AI assistant connections per board
+const MAX_AGENT_BOARDS = 12; // boards one assistant connection can open
 const COLOR = /^#[0-9a-f]{6}$/i;
 const DEFAULT_COLOR = "#a3a9b5";
 const EMPTY = () => ({ version: 1, settings: {}, lists: [], todos: [] });
@@ -199,8 +204,13 @@ export async function agentIs(token, env) {
   const hash = await hashToken(token);
   const rec = await env.NOW_AND_THEN.get("atok:" + hash, "json");
   // Same as device tokens: an owner board's keys stop if its TOKEN_* secret goes.
-  if (rec && rec.board && (rec.kind !== "owner" || env["TOKEN_" + rec.board.toUpperCase()])) {
-    return { board: rec.board, name: rec.name || "", kind: rec.kind === "owner" ? "owner" : "invited", admin: false, scope: rec.scope === "write" ? "write" : "read", label: rec.label || "", agent: hash };
+  const usable = (b) => b && b.board && (b.kind !== "owner" || env["TOKEN_" + b.board.toUpperCase()]);
+  if (usable(rec)) {
+    const kind = (b) => (b.kind === "owner" ? "owner" : "invited");
+    // The board that made the key first, then any added with POST /agents/attach.
+    const boards = [{ board: rec.board, name: rec.name || "", kind: kind(rec), label: rec.boardLabel || "" },
+      ...(Array.isArray(rec.also) ? rec.also : []).filter(usable).map((b) => ({ board: b.board, name: b.name || "", kind: kind(b), label: b.label || "" }))];
+    return { board: rec.board, name: rec.name || "", kind: kind(rec), admin: false, scope: rec.scope === "write" ? "write" : "read", label: rec.label || "", agent: hash, boards };
   }
   if (await env.NOW_AND_THEN.get("gone:" + hash)) return { gone: true };
   return null;
@@ -294,7 +304,11 @@ export async function deleteBoard(env, board, hash) {
   }
   if (hash) await forgetToken(env, "tok:", hash);
   for (const d of await devicesOf(env, board)) await forgetToken(env, "dtok:", d.id);
-  for (const a of await agentsOf(env, board)) await forgetToken(env, "atok:", a.id);
+  // Keys this board made end; keys another board made just lose this one.
+  for (const a of await agentsOf(env, board)) {
+    if (a.home) await forgetToken(env, "atok:", a.id);
+    else await detachAgent(env, a.id, board);
+  }
   return { deleted: true, board, snapshots: snaps.length };
 }
 // Removes a token, leaving a "gone" marker so its devices are told the board was
@@ -304,10 +318,25 @@ async function forgetToken(env, prefix, hash) {
   await env.NOW_AND_THEN.put("gone:" + hash, "1", { expirationTtl: GONE_DAYS * 86400 });
   tokenCache.delete(hash);
 }
+// Agent keys that open this board: ones it made (home) and ones another board
+// made and added it to (the metadata's `also` holds just those boards' ids).
 async function agentsOf(env, board) {
   return (await listKeys(env, "atok:"))
-    .filter((k) => k.metadata && k.metadata.board === board)
-    .map((k) => ({ id: k.name.slice(5), label: k.metadata.label || "", scope: k.metadata.scope === "write" ? "write" : "read", created: k.metadata.created || "" }));
+    .filter((k) => k.metadata && (k.metadata.board === board || (Array.isArray(k.metadata.also) && k.metadata.also.includes(board))))
+    .map((k) => ({ id: k.name.slice(5), label: k.metadata.label || "", scope: k.metadata.scope === "write" ? "write" : "read", created: k.metadata.created || "",
+      home: k.metadata.board === board, boards: 1 + (Array.isArray(k.metadata.also) ? k.metadata.also.length : 0) }));
+}
+// KV metadata is capped at 1 KB, so it carries the extra boards' ids only.
+const agentMeta = (rec) => ({ board: rec.board, name: rec.name, kind: rec.kind, label: rec.label, scope: rec.scope, created: rec.created,
+  ...(rec.also && rec.also.length ? { also: rec.also.map((b) => b.board) } : {}) });
+async function saveAgent(env, hash, rec) {
+  await env.NOW_AND_THEN.put("atok:" + hash, JSON.stringify(rec), { metadata: agentMeta(rec) });
+}
+async function detachAgent(env, hash, board) {
+  const rec = await env.NOW_AND_THEN.get("atok:" + hash, "json");
+  if (!rec || !Array.isArray(rec.also)) return;
+  rec.also = rec.also.filter((b) => b.board !== board);
+  await saveAgent(env, hash, rec);
 }
 async function devicesOf(env, board) {
   return (await listKeys(env, "dtok:"))
@@ -874,11 +903,33 @@ async function agents(request, env, who, url) {
     if (error) return error;
     if ((await agentsOf(env, who.board)).length >= MAX_AGENTS) return json({ error: `There are already ${MAX_AGENTS} assistants connected. Remove one first.` }, 409, hdrs);
     const token = "na_" + b64url(randomBytes(32));
-    const rec = { board: who.board, name: who.name || "", kind: who.kind, label: cleanName(value.label) || "AI assistant", scope: value.scope === "write" ? "write" : "read", created: new Date().toISOString() };
+    const rec = { board: who.board, name: who.name || "", kind: who.kind, label: cleanName(value.label) || "AI assistant", scope: value.scope === "write" ? "write" : "read", created: new Date().toISOString(),
+      ...(cleanName(value.board_name) ? { boardLabel: cleanName(value.board_name) } : {}) };
     const hash = await hashToken(token);
-    await env.NOW_AND_THEN.put("atok:" + hash, JSON.stringify(rec), { metadata: rec });
+    await saveAgent(env, hash, rec);
     const base = url.origin + url.pathname.replace(/\/agents\/?$/, "");
     return json({ id: hash, token, url: base + "/mcp/" + token, label: rec.label, scope: rec.scope, created: rec.created }, 200, hdrs);
+  }
+  // Adds this board to a key another board made. Knowing the key itself (shown once,
+  // to the device that made it) and this board's token are both needed.
+  if (m === "POST" && id === "attach") {
+    const { value, error } = await readJson(request, 2000);
+    if (error) return error;
+    const key = String(value.key || "").trim();
+    if (!AGENT_TOKEN.test(key)) return json({ error: "not found" }, 404, hdrs);
+    const hash = await hashToken(key);
+    const rec = await env.NOW_AND_THEN.get("atok:" + hash, "json");
+    if (!rec || !rec.board) return json({ error: "not found" }, 404, hdrs);
+    const label = cleanName(value.name);
+    if (rec.board === who.board) {
+      if (label && rec.boardLabel !== label) { rec.boardLabel = label; await saveAgent(env, hash, rec); }
+      return json({ attached: true, boards: 1 + (rec.also || []).length }, 200, hdrs);
+    }
+    const also = (Array.isArray(rec.also) ? rec.also : []).filter((b) => b.board !== who.board);
+    if (also.length + 1 >= MAX_AGENT_BOARDS) return json({ error: `One assistant can open up to ${MAX_AGENT_BOARDS} boards.` }, 409, hdrs);
+    rec.also = [...also, { board: who.board, name: who.name || "", kind: who.kind, ...(label ? { label } : {}) }];
+    await saveAgent(env, hash, rec);
+    return json({ attached: true, boards: 1 + rec.also.length }, 200, hdrs);
   }
   if (m === "GET" && !id) {
     const list = await agentsOf(env, who.board);
@@ -887,9 +938,11 @@ async function agents(request, env, who, url) {
   if (m === "DELETE" && id) {
     if (!DEVICE_ID.test(id)) return json({ error: "not found" }, 404, hdrs);
     const got = await env.NOW_AND_THEN.getWithMetadata("atok:" + id);
-    if (got.value === null || !got.metadata || got.metadata.board !== who.board) return json({ error: "not found" }, 404, hdrs);
-    await forgetToken(env, "atok:", id);
-    return json({ removed: true }, 200, hdrs);
+    if (got.value === null || !got.metadata) return json({ error: "not found" }, 404, hdrs);
+    if (got.metadata.board === who.board) { await forgetToken(env, "atok:", id); return json({ removed: true }, 200, hdrs); }
+    // Made by another board: only this board comes off it.
+    if (Array.isArray(got.metadata.also) && got.metadata.also.includes(who.board)) { await detachAgent(env, id, who.board); return json({ removed: true, detached: true }, 200, hdrs); }
+    return json({ error: "not found" }, 404, hdrs);
   }
   return json({ error: "method not allowed" }, 405, hdrs);
 }
@@ -903,25 +956,30 @@ async function mcpRoute(request, env, keyInPath) {
   if (who.gone) return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "This connection was removed." } }, 410);
   const { value, error } = await readJson(request, 200_000);
   if (error) return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
-  const KEY = "board:" + who.board;
-  let stored;
-  const store = {
-    async read() {
-      stored = await env.NOW_AND_THEN.get(KEY, "json");
-      return { board: await readBoard(env, who.board, stored), tz: stored && stored.tz };
-    },
-    // The inbox first, as quick add does: if the save races a device's, the
-    // change still reaches the board on its next read or save.
-    async save(todos) {
-      await addToInbox(env, who.board, todos);
-      await putBoard(env, who, stored, { version: 1, settings: (stored && stored.settings) || {}, lists: [], todos });
-    },
+  // One store per board the key opens (see POST /agents/attach).
+  const storeFor = (boardId) => {
+    const b = who.boards.find((x) => x.board === boardId) || who.boards[0];
+    const owner = { board: b.board, name: b.name, kind: b.kind };
+    const KEY = "board:" + b.board;
+    let stored;
+    return {
+      async read() {
+        stored = await env.NOW_AND_THEN.get(KEY, "json");
+        return { board: await readBoard(env, b.board, stored), tz: stored && stored.tz };
+      },
+      // The inbox first, as quick add does: if the save races a device's, the
+      // change still reaches the board on its next read or save.
+      async save(todos) {
+        await addToInbox(env, b.board, todos);
+        await putBoard(env, owner, stored, { version: 1, settings: (stored && stored.settings) || {}, lists: [], todos });
+      },
+    };
   };
   const batch = Array.isArray(value);
   const msgs = (batch ? value : [value]).slice(0, 20);
   const out = [];
   for (const msg of msgs) {
-    const answer = await handleRpc(msg, who, store);
+    const answer = await handleRpc(msg, who, storeFor);
     if (answer) out.push(answer);
   }
   if (!out.length) return new Response(null, { status: 202, headers: cors() });

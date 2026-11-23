@@ -9,8 +9,8 @@ Now or Later is a simple todo app that works like a paper notebook. A board usua
 An agent can't create its own key. The person whose lists these are makes one in the app:
 
 1. Open Now or Later with sync turned on.
-2. Go to **Settings > Sync > Advanced > AI assistants**.
-3. Choose **Can only read** or **Can read and change**, optionally name it, and tap **Connect an assistant**.
+2. Go to **Settings > Sync** and tap **Connect an assistant** (under Assistants and Shortcuts).
+3. Optionally name it, choose **Only read** or **Read and change**, and tap **Make address**.
 4. Copy the address it shows. It's shown only once.
 
 The address looks like this:

@@ -6,7 +6,7 @@
 // plain JSON. The Worker keeps nothing between requests.
 //
 // Who's asking is an agent key ("na_..."), made in the app under Settings > Sync >
-// Advanced > AI assistants. Each key opens one board (or several, when a device
+// Connect an assistant. Each key opens one board (or several, when a device
 // that keeps several boards adds them: then every tool takes a board), can be read only or read and
 // change, and only ever works here: /data, sharing, invites, devices and deleting
 // the board all turn it away. The key goes in an Authorization header, or in the
@@ -335,7 +335,7 @@ export async function handleRpc(msg, agent, store) {
       const args = params.arguments && typeof params.arguments === "object" ? params.arguments : {};
       const tool = TOOLS.find((t) => t.name === name);
       if (!tool) return rpcError(rid, -32602, "Unknown tool: " + name);
-      if (!tools.includes(tool)) return ok(rid, textResult("This connection can only read the lists. To let it make changes, make a new one in Settings > Sync > Advanced and choose \"Can read and change\".", true));
+      if (!tools.includes(tool)) return ok(rid, textResult("This connection can only read the lists. To let it make changes, make a new one in Settings > Sync > Connect an assistant and choose \"Read and change\".", true));
       try {
         const named = many && args.board != null && String(args.board).trim() ? pickBoard(choices, args.board) : null;
         // A todo id without a board: look on each board in turn.

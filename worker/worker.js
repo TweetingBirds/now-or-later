@@ -844,7 +844,7 @@ async function join(request, env) {
 }
 
 // ---------- device links ----------
-// POST /devices makes a one-time code for "Copy link for another device". The link
+// POST /devices makes a one-time code for "Add a device". The link
 // used to carry the board's token itself, which never expired and couldn't be taken
 // back. Now the new device trades the code for a token of its own.
 async function devices(request, env, who, url) {
@@ -952,7 +952,7 @@ async function mcpRoute(request, env, keyInPath) {
   if (request.method !== "POST") return json({ error: "method not allowed: this is an MCP server (Streamable HTTP, POST only)", docs: DOCS_URL }, 405, { Allow: "POST, OPTIONS" });
   const header = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
   const who = await agentIs(keyInPath || header, env);
-  if (!who) return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "This assistant's key isn't valid. Make a new connection in Now or Later under Settings > Sync > Advanced. Setup: " + DOCS_URL } }, 401);
+  if (!who) return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "This assistant's key isn't valid. Make a new connection in Now or Later under Settings > Sync > Connect an assistant. Setup: " + DOCS_URL } }, 401);
   if (who.gone) return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "This connection was removed." } }, 410);
   const { value, error } = await readJson(request, 200_000);
   if (error) return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);

@@ -9,7 +9,7 @@
 
   // APP_VERSION is bumped by hand for notable releases. The BUILD_* values are
   // stamped by the GitHub Pages workflow on every deploy (left as-is locally).
-  const APP_VERSION = "1.29.0";
+  const APP_VERSION = "1.29.1";
   const BUILD_NUMBER = "__BUILD_NUMBER__";
   const BUILD_SHA = "__BUILD_SHA__";
   const BUILD_DATE = "__BUILD_DATE__";
@@ -1992,6 +1992,7 @@
     settingsBack.hidden = name === "main";
     dlg.classList.toggle("sub", name !== "main");
     dlg.querySelector(".settings-body").scrollTop = 0;
+    if (name === "boards") { boardMsg(""); renderBoards(); }
     if (name === "main") { showSyncRow(); if (from) dlg.querySelector(`[data-go="${from}"]`)?.focus(); }
     else if (dlg.open) settingsBack.focus();
   }
@@ -2083,7 +2084,8 @@
     let s = null;
     try { s = JSON.parse(sessionStorage.getItem("nat.switched")); sessionStorage.removeItem("nat.switched"); } catch (e) {}
     if (!s || s.to !== SLOT) return;
-    if (s.after === "sync") { openSettingsTo("sync"); toast(`${slotName(currentSlot())} is ready. Connect it to sync here, or leave it on this device.`, 6000); }
+    if (s.after === "made") toast(`${slotName(currentSlot())} is ready, and syncs on its own.`, 4000);
+    else if (s.after === "sync") { openSettingsTo("sync"); toast(`${slotName(currentSlot())} is ready. Connect it to sync here, or leave it on this device.`, 6000); }
     else toast(`Switched to ${slotName(currentSlot())}.`, 2500);
   }
   // Makes an empty slot (with this device's look) and returns its id. `preset`
@@ -2124,6 +2126,28 @@
       return el("li", {}, name, el("span", { class: "board-btns" }, open, rename, remove));
     }));
     document.getElementById("boardAdd").disabled = all.length >= MAX_SLOTS;
+    document.getElementById("boardAddNote").textContent = canMakeSynced()
+      ? "A new board is made on your sync service, so it syncs right away, with its own token."
+      : syncConfigured() && local.synced
+        ? "A new board stays on this device until it's connected. Only whoever runs your sync service can make synced boards; ask them for an invite link and open it here."
+        : "A new board stays on this device. Turn on sync for it in Settings, Sync, if you want it on your other devices.";
+  }
+  // Whoever runs the sync service (an admin) can make a synced board straight away:
+  // an invite to themselves, used at once (POST /invites, then POST /join).
+  // Any admin board on this device will do, so a board can be added from any of them.
+  const adminLocal = () => [local, ...slotList().filter(x => x.id !== SLOT).map(x => localOf(x.id))]
+    .find(l => l.syncUrl && l.syncToken && l.synced && !l.otherBoard && l.admin);
+  const canMakeSynced = () => !!adminLocal();
+  async function makeSyncedBoard(name) {
+    const a = adminLocal(), base = a.syncUrl.replace(/\/+$/, "");
+    const made = await fetch(base + "/invites", { method: "POST", cache: "no-store",
+      headers: { "Authorization": "Bearer " + a.syncToken, "Content-Type": "application/json" }, body: JSON.stringify({ label: name, days: 1 }) });
+    if (!made.ok) throw new Error(answered(made.status));
+    const inv = await made.json();
+    const res = await fetch(base + "/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: inv.code, name }) });
+    if (res.status === 503) throw new Error("The sync service already holds as many boards as it's set up for (MAX_BOARDS in wrangler.toml). Raise it, or remove a board you don't use.");
+    if (!res.ok) throw new Error(answered(res.status));
+    return (await res.json()).token;
   }
   async function removeSlot(x) {
     const l = localOf(x.id), name = slotName(x);
@@ -2141,14 +2165,21 @@
     boardMsg(`${name} was removed from this device.`);
     renderBoards(); showBoardPick();
   }
-  document.querySelector('[data-go="boards"]').addEventListener("click", () => { boardMsg(""); renderBoards(); });
   document.getElementById("boardNewName").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("boardAdd").click(); } });
-  document.getElementById("boardAdd").addEventListener("click", () => {
-    const input = document.getElementById("boardNewName");
+  document.getElementById("boardAdd").addEventListener("click", async (ev) => {
+    const input = document.getElementById("boardNewName"), btn = ev.currentTarget;
+    const name = cleanLabel(input.value) || "Board " + (slotList().length + 1);
+    if (slotList().length >= MAX_SLOTS) { boardMsg(`This device already keeps ${MAX_SLOTS} boards. Remove one first.`, true); return; }
+    let preset = {}, synced = false;
+    if (canMakeSynced()) {
+      btn.disabled = true; boardMsg("Making it on the sync service…");
+      try { const syncToken = await makeSyncedBoard(name); preset = { syncUrl: adminLocal().syncUrl, syncToken }; synced = true; }
+      catch (e) { btn.disabled = false; boardMsg("Couldn't make it on the sync service: " + (e instanceof TypeError ? "it can't be reached right now." : e.message), true); return; }
+    }
     let id;
-    try { id = addSlot(input.value || "Board " + (slotList().length + 1)); } catch (e) { boardMsg(e.message, true); return; }
+    try { id = addSlot(name, preset); } catch (e) { btn.disabled = false; boardMsg(e.message, true); return; }
     input.value = "";
-    switchBoard(id, "sync");
+    switchBoard(id, synced ? "made" : "sync");
   });
 
   // Tapping the badge syncs now. On a phone there's no hover, so it also says what's wrong.

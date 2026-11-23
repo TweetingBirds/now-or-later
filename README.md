@@ -13,7 +13,7 @@ A notebook-style todo list, made for Tiffany. It works the way her paper noteboo
 - **Done** can be searched and filtered by when a todo was finished (today, this week, this month) and which list it came from. The ↩ button on a finished todo puts it back, unchecked, on its list.
 - Dark mode follows the system, or pick Light or Dark per device in Settings. Phones give a small buzz when a todo is picked up and dropped (Android, and iPhone on iOS 18 or later).
 - On a Mac, keyboard shortcuts cover adding, moving and checking off todos. Press **?** to see them. A toggle at the top of that sheet makes the shortcuts that work anywhere (N, 1–9 and ?) need Option, for people who find single keys get in the way. Single keys are the default.
-- Sync starts from an **invite link**: open it, tap **Join**, and that person has their own synced board. **Copy link for another device** in Settings adds a phone, tablet or computer to the same board with a link that works once, within a day. Settings → Sync → **Advanced** lists those devices (each can be removed), quick add, invites and **Delete synced board…**.
+- Sync starts from an **invite link**: open it, tap **Join**, and that person has their own synced board. **Add a device** in Settings → Sync adds a phone, tablet or computer to the same board with a link that works once, within a day. The Sync page lists those devices (each can be removed), connected assistants, the quick add Shortcut, people (for admins) and **Delete this board…**.
 - Settings is grouped into Your day, Look and feel, Sync and backups (each its own page) and About. About links to **What's New**, **Support & FAQ**, **Privacy** and **Terms**. What's New is marked *New* after an update until it's opened.
 
 It's a progressive web app: open it in Safari or Chrome and choose **Add to Home Screen** to install it. It works offline, and syncs through a small Cloudflare Worker when one is set up.
@@ -41,7 +41,7 @@ Each person has their own board and their own access token. There are two kinds 
 - **Owner tokens** are Worker secrets named `TOKEN_<NAME>`, set by hand (Nate's and Tiffany's). That board is stored under the KV key `board:<name>`. Two secrets must never hold the same value.
 - **Invited tokens** are made by the Worker when someone opens an invite link (see [Invites](#invites)). That board is stored under `board:b_<random id>`, and KV holds only a SHA-256 hash of the token (`tok:<hash>`), never the token itself.
 
-To share one board, two people use the same token: **Copy link for another device** in Settings makes a link that carries it.
+To share one board, two people use the same token: **Add a device** in Settings → Sync makes a link that carries it.
 
 ### Several boards on one device
 
@@ -103,15 +103,15 @@ Every token must be different. If two `TOKEN_*` secrets hold the same value the 
 
 ### 3. Connect each phone
 
-Open the app, tap **Settings** → **Sync** → **Set up by hand**, and paste the Worker address and that person's token, then **Save and sync**. The first sync on a new device loads the saved board. The badge at the top stays hidden while sync is fine, and shows **Offline** or **Sync problem** (tap it to retry) when something needs attention.
+Open the app, tap **Settings** → **Sync** → **Set up sync by hand…**, and paste the Worker address and that person's token, then **Save and sync**. The first sync on a new device loads the saved board. The badge at the top stays hidden while sync is fine, and shows **Offline** or **Sync problem** (tap it to retry) when something needs attention.
 
 ## Invites
 
-Owners listed in `ADMINS` in `worker/wrangler.toml` (now `nate`) see **Invite people** in Settings → Sync. **Create invite link** asks the Worker for a one-time code and shares a link like `https://now-or-later.app/#join=<code>&sync=<worker address>`. The code and the Worker address sit after the `#`, so GitHub Pages never sees them.
+Owners listed in `ADMINS` in `worker/wrangler.toml` (now `nate`) see **People** in Settings → Sync. **Invite someone** → **Make invite link** asks the Worker for a one-time code and shares a link like `https://now-or-later.app/#join=<code>&sync=<worker address>`. The code and the Worker address sit after the `#`, so GitHub Pages never sees them.
 
 Opening the link shows **Join Now or Later sync**, with an optional name for the board and the Worker's host name. **Join** calls `POST /join`, which deletes the invite, makes a new board and a new token, and returns the token once. The app saves it like a pasted token and uploads the lists already on that device. Invites expire after 14 days (up to 30) and Settings lists open ones with **Revoke**. The note on an invite ("Mom") is only for the person inviting; it's stored with the board so `GET /boards` can say who is who.
 
-**Copy link for another device** calls `POST /devices`, which returns a one-time code (`dlink:<code>`, 24 hours), and shares `#device=<code>&sync=<worker address>`. Opening it calls `POST /devices/connect {code, label}`, which deletes the code and makes a new `nd_` token just for that device (`dtok:<hash>`, with the board, the device kind and the date). The token itself never travels in a link. `GET /devices` lists a board's devices and `DELETE /devices/<id>` signs one out. A device token stops working when its board is deleted, or, for an owner board, when the `TOKEN_*` secret is removed. Older `#connect=<token>` links are still accepted, but nothing makes them any more.
+**Add a device** calls `POST /devices`, which returns a one-time code (`dlink:<code>`, 24 hours), and shares `#device=<code>&sync=<worker address>`. Opening it calls `POST /devices/connect {code, label}`, which deletes the code and makes a new `nd_` token just for that device (`dtok:<hash>`, with the board, the device kind and the date). The token itself never travels in a link. `GET /devices` lists a board's devices and `DELETE /devices/<id>` signs one out. A device token stops working when its board is deleted, or, for an owner board, when the `TOKEN_*` secret is removed. Older `#connect=<token>` links are still accepted, but nothing makes them any more.
 
 ## Shared lists
 
@@ -150,7 +150,7 @@ The newest stamp wins a merge, so a device whose clock is off used to win or los
 
 ### Deleting a board
 
-People who joined by invite see **Delete synced board…** in Settings. It calls `DELETE /data?confirm=delete`, which deletes `board:<id>`, every `snap:<id>:` copy, `old:<id>`, the token's `tok:` key and every device token made for the board, then leaves `gone:<hash>` (no other data) for 30 days. While that marker exists the token gets **410 Gone**, and the person's other devices turn sync off and say the board was deleted, instead of uploading it again. The app can also erase the lists on the device doing the delete.
+People who joined by invite see **Delete this board…** in Settings → Sync. It calls `DELETE /data?confirm=delete`, which deletes `board:<id>`, every `snap:<id>:` copy, `old:<id>`, the token's `tok:` key and every device token made for the board, then leaves `gone:<hash>` (no other data) for 30 days. While that marker exists the token gets **410 Gone**, and the person's other devices turn sync off and say the board was deleted, instead of uploading it again. The app can also erase the lists on the device doing the delete.
 
 Owner boards (`TOKEN_*`) can't delete themselves, because the secret would keep working. Remove those by hand: `wrangler secret delete TOKEN_<NAME>`, then delete `board:<name>` in the KV dashboard (its snapshots expire within 30 days). An admin can delete an invited board for someone who emails in: `GET /boards` lists them, `DELETE /boards/<id>` removes one just like the person's own delete.
 
@@ -183,7 +183,7 @@ Every board response carries `X-Board` (the board id the app pins itself to), `X
 
 ### AI assistants
 
-Settings > Sync > Advanced > **AI assistants** calls `POST /agents`, which makes an `na_` key stored only as `atok:<hash>` (with the board, a label, `read` or `write`, and the date), and shows `https://<worker>/mcp/na_…` once. Claude's custom connector screen has nowhere to put a header, so the key rides in the address; a header (`Authorization: Bearer na_…` on `POST /mcp`) works too. Agent keys open nothing but `/mcp`: `whoIs` refuses them everywhere else, so they can't read `/data` directly, share, invite, add devices or delete the board. At most 10 per board; deleting the board, or removing an owner's `TOKEN_*` secret, ends them.
+Settings > Sync > **Connect an assistant** calls `POST /agents`, which makes an `na_` key stored only as `atok:<hash>` (with the board, a label, `read` or `write`, and the date), and shows `https://<worker>/mcp/na_…` once. Claude's custom connector screen has nowhere to put a header, so the key rides in the address; a header (`Authorization: Bearer na_…` on `POST /mcp`) works too. Agent keys open nothing but `/mcp`: `whoIs` refuses them everywhere else, so they can't read `/data` directly, share, invite, add devices or delete the board. At most 10 per board; deleting the board, or removing an owner's `TOKEN_*` secret, ends them.
 
 One key can open several boards on the same Worker. When the device keeps more than one board, the app shows **Boards it can open**; after `POST /agents` it calls `POST /agents/attach {key, name}` with each ticked board's own token, so adding a board needs both the key and that board's token. The key's record gains `also: [{board, name, kind, label}]` (its KV metadata holds only the ids, to stay under 1 KB), up to 12 boards in all. With more than one board, `initialize` lists them, each tool takes a `board` argument (an enum of the boards' names on the device, the first being the one the key was made on), and each result carries `board`. Tools that take a todo `id` look on each board in turn when no board is given. `GET /agents` on an added board lists the key with `home: false`, and `DELETE /agents/<id>` there, or deleting that board, only takes that board off the key.
 

@@ -63,13 +63,13 @@ Paste the token when it asks. Each `TOKEN_<NAME>` secret is one board. Every tok
 
 ## 6. Connect the app
 
-Open [Now or Later](https://now-or-later.app/), tap **Settings**, then **Sync**, open **Set up by hand**, and paste your Worker's address and your token. Tap **Save and sync**.
+Open [Now or Later](https://now-or-later.app/), tap **Settings**, then **Sync**, tap **Set up sync by hand…**, and paste your Worker's address and your token. Tap **Save and sync**.
 
-To add your other devices, tap **Copy link for another device** in Settings → Sync and open that link on each one. Each link works once, within a day, and gives that device its own token. **Advanced** lists those devices so you can sign out one you've lost. Removing a `TOKEN_<NAME>` secret signs out every device added from it, too.
+To add your other devices, tap **Add a device** in Settings → Sync and open that link on each one. Each link works once, within a day, and gives that device its own token. **Your devices** lists them so you can sign out one you've lost. Removing a `TOKEN_<NAME>` secret signs out every device added from it, too.
 
 ## Inviting family
 
-If your name is in `ADMINS`, Settings → Sync → **Advanced** shows **Invite people**. Each invite link gives one person their own board on your Worker, with a token made for them. They open it, tap **Join**, and they're syncing. Invites work once and expire after 14 days. Settings lists open invites, so you can revoke one.
+If your name is in `ADMINS`, Settings → Sync shows **People**, with **Invite someone**. Each invite link gives one person their own board on your Worker, with a token made for them. They open it, tap **Join**, and they're syncing. Invites work once and expire after 14 days. Settings lists open invites, so you can revoke one.
 
 People who joined by invite can delete their own board from Settings at any time. Boards you made with `TOKEN_<NAME>` secrets are deleted by hand (below).
 

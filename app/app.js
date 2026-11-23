@@ -9,7 +9,7 @@
 
   // APP_VERSION is bumped by hand for notable releases. The BUILD_* values are
   // stamped by the GitHub Pages workflow on every deploy (left as-is locally).
-  const APP_VERSION = "1.29.1";
+  const APP_VERSION = "1.30.0";
   const BUILD_NUMBER = "__BUILD_NUMBER__";
   const BUILD_SHA = "__BUILD_SHA__";
   const BUILD_DATE = "__BUILD_DATE__";
@@ -552,7 +552,7 @@
       // so this device's lists aren't merged into it.
       if (!local.synced && (local.pristine || local.switching)) {
         const got = await fetch(dataUrl(), { headers: { "Authorization": "Bearer " + local.syncToken } });
-        if (got.status === 401) throw new Error("The sync service didn't accept this device's access token.");
+        if (got.status === 401) throw new Error("The sync service didn't accept this device's key.");
         if (got.status === 410) throw boardGone();
         if (got.status === 409) throw new Error(await clashMessage(got));
         if (!got.ok) throw new Error(answered(got.status));
@@ -570,7 +570,7 @@
       const old = oldToSend();
       const res = await fetch(dataUrl(), { method: "PUT", headers, body: JSON.stringify(old.length ? Object.assign({}, board, { old }) : board) });
       noteClock(res, asked);
-      if (res.status === 401) throw new Error("The sync service didn't accept this device's access token.");
+      if (res.status === 401) throw new Error("The sync service didn't accept this device's key.");
       if (res.status === 410) throw boardGone();
       if (res.status === 409) throw new Error(await clashMessage(res));
       if (!res.ok) throw new Error(answered(res.status));
@@ -644,7 +644,7 @@
       const asked = Date.now();
       const res = await fetch(dataUrl(), { headers: { "Authorization": "Bearer " + local.syncToken }, cache: "no-store", signal: quit.signal });
       noteClock(res, asked);
-      if (res.status === 401) throw new Error("The sync service didn't accept this device's access token.");
+      if (res.status === 401) throw new Error("The sync service didn't accept this device's key.");
       if (res.status === 410) throw boardGone();
       if (res.status === 409) throw new Error(await clashMessage(res));
       if (!res.ok) throw new Error(answered(res.status));
@@ -1255,7 +1255,7 @@
     const res = await fetch(workerBase() + "/shared" + path, Object.assign({ cache: "no-store" }, opts, {
       headers: { "Authorization": "Bearer " + local.syncToken, "Content-Type": "application/json" },
     }));
-    if (res.status === 401) throw new Error("The sync service didn't accept this device's access token.");
+    if (res.status === 401) throw new Error("The sync service didn't accept this device's key.");
     if (res.status === 410) throw boardGone();
     let body = {};
     try { body = await res.json(); } catch (e) {}
@@ -1969,11 +1969,7 @@
   document.getElementById("openSettings").addEventListener("click", () => {
     document.getElementById("carry").checked = !!board.settings.carry;
     document.getElementById(board.settings.doneNow ? "doneNow" : "doneLater").checked = true;
-    document.getElementById("syncUrl").value = local.syncUrl;
-    document.getElementById("syncToken").value = local.syncToken;
-    const sm = document.getElementById("syncMsg");
-    if (local.otherBoard || syncError) { sm.className = "msg bad"; sm.textContent = syncError || "This device's token now opens a different board. Nothing was synced."; }
-    else { sm.className = "msg"; sm.textContent = syncSummary(); }
+    showSyncCard();
     showVersion();
     closeRestore(); backupMsg(""); loadSnapshots(); showSyncMore(); inviteMsg("");
     showSyncRow(); showPane("main");
@@ -1993,6 +1989,7 @@
     dlg.classList.toggle("sub", name !== "main");
     dlg.querySelector(".settings-body").scrollTop = 0;
     if (name === "boards") { boardMsg(""); renderBoards(); }
+    if (name === "sync") showSyncCard();
     if (name === "main") { showSyncRow(); if (from) dlg.querySelector(`[data-go="${from}"]`)?.focus(); }
     else if (dlg.open) settingsBack.focus();
   }
@@ -2011,10 +2008,27 @@
     document.getElementById("backupRowSub").textContent = syncConfigured() && local.synced
       ? "Download, restore and nightly copies." : "Download or restore a backup file.";
   }
+  // The card at the top of the Sync page: one line for where things stand, and
+  // Sync now when there's something to sync with.
+  function showSyncCard(note = "") {
+    const state = syncState(), head = document.getElementById("syncHead"), sm = document.getElementById("syncMsg");
+    document.getElementById("syncDot").dataset.state = state;
+    document.getElementById("syncNow").hidden = state === "off" || !!local.otherBoard;
+    document.getElementById("syncIntro").hidden = state !== "off";
+    sm.classList.toggle("bad", state === "error");
+    if (state === "off") { head.textContent = "Sync is off"; sm.textContent = note || "Your lists stay on this device."; return; }
+    if (state === "error") {
+      head.textContent = "Sync needs a look";
+      sm.textContent = note || syncError || "This device's key now opens a different board. Nothing was synced. Set up sync by hand to choose which board to use.";
+      return;
+    }
+    head.textContent = local.board ? `Syncing ${boardLabel(local.board)}` : "Syncing";
+    sm.textContent = note || (state === "offline" ? "Offline. " : "") + syncSummary();
+  }
   function syncSummary() {
     if (!syncConfigured()) return "";
     const n = pendingChanges().length;
-    return [local.board ? `Syncing with ${boardLabel(local.board)}.` : "", lastSyncedText() + ".",
+    return [lastSyncedText() + ".",
       n ? `${plural(n, "change")} on this device ${n === 1 ? "hasn't" : "haven't"} synced yet.` : ""].filter(Boolean).join(" ");
   }
   // ---------- boards on this device (see slotKeys at the top) ----------
@@ -2155,7 +2169,7 @@
     const yes = await ask({
       title: `Remove ${name} from this device?`,
       text: synced
-        ? "Its lists stay on the sync service and on your other devices. To bring it back here, use Copy link for another device on one of them."
+        ? "Its lists stay on the sync service and on your other devices. To bring it back here, use Add a device on one of them, in Settings, Sync."
         : "It doesn't sync, so its lists are only on this device, and removing it erases them. Open it and download a backup first if you might want them.",
       yes: "Remove", danger: true,
     });
@@ -2204,20 +2218,50 @@
     const moved = sweepDone(); commit();
     if (moved) toast(`${moved} finished todo${moved === 1 ? "" : "s"} moved to Done.`);
   }));
+  // Set up sync by hand: a sheet with the address and key, for a sync service
+  // someone runs for you. Invite and device links fill these in by themselves.
+  const handDlg = document.getElementById("handDlg");
+  const handSay = (text, bad) => { const m = document.getElementById("handMsg"); m.className = bad ? "msg bad" : "msg"; m.textContent = text; };
+  document.getElementById("byHandOpen").addEventListener("click", () => {
+    document.getElementById("syncUrl").value = local.syncUrl;
+    document.getElementById("syncToken").value = local.syncToken;
+    handSay("");
+    handDlg.showModal();
+  });
+  // Sync off: forget the address and key here. The lists stay on this device.
+  function stopSyncHere() {
+    useSync("", "");
+    syncError = ""; netDown = false; idleStatus(); showSyncMore(); render();
+  }
   document.getElementById("saveSync").addEventListener("click", async () => {
-    const msg = document.getElementById("syncMsg");
     const url = document.getElementById("syncUrl").value.trim();
     const token = document.getElementById("syncToken").value.trim();
-    if ((url && !token) || (!url && token)) { msg.className = "msg bad"; msg.textContent = "Fill in both the address and the token, or leave both empty."; return; }
-    if (url && !/^https:\/\//i.test(url)) { msg.className = "msg bad"; msg.textContent = "The address should start with https://"; return; }
+    if ((url && !token) || (!url && token)) { handSay("Fill in both the address and the key, or leave both empty.", true); return; }
+    if (url && !/^https:\/\//i.test(url)) { handSay("The address should start with https://", true); return; }
+    if (!url) { stopSyncHere(); handDlg.close(); showSyncCard("Sync is off. Your lists stay on this device."); return; }
     useSync(url, token);
-    if (!url) { msg.className = "msg"; msg.textContent = "Sync is off. Lists stay on this device."; syncError = ""; netDown = false; idleStatus(); showSyncMore(); render(); return; }
-    msg.className = "msg"; msg.textContent = "Connecting…";
+    handSay("Connecting…");
     const result = await sync();
-    if (result === true) { msg.textContent = `Connected to ${boardLabel(local.board)}. Your lists are synced.`; render(); showSyncMore(); setTimeout(() => dlg.close(), 1400); }
-    else { msg.className = "msg bad"; msg.textContent = "Couldn't sync: " + result; }
+    if (result === true) { render(); showSyncMore(); handDlg.close(); showSyncCard(`Connected to ${boardLabel(local.board)}. Your lists are synced.`); }
+    else handSay("Couldn't sync: " + result, true);
   });
-  // A new token (or a confirmed switch after a "board changed" warning) means a
+  document.getElementById("stopSync").addEventListener("click", async () => {
+    const ok = await ask({ title: "Stop syncing on this device?", yes: "Stop syncing",
+      text: `This device stops syncing with ${boardLabel(local.board)}. Your lists stay here, and your other devices keep syncing. To sync here again later, use Add a device on one of them.` });
+    if (!ok) return;
+    clearTimeout(pushTimer); pushTimer = null;
+    stopSyncHere();
+    showSyncCard("Sync is off on this device. Your lists are still here.");
+  });
+  document.getElementById("syncNow").addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget;
+    btn.disabled = true; showSyncCard("Syncing…");
+    const result = await sync();
+    btn.disabled = false;
+    showSyncCard(result === true ? "" : typeof result === "string" ? "Couldn't sync: " + result : "");
+    if (result === true) showSyncMore();
+  });
+  // A new key (or a confirmed switch after a "board changed" warning) means a
   // different board: load it instead of merging this device's lists into it.
   function useSync(url, token) {
     if (url !== local.syncUrl || token !== local.syncToken || local.otherBoard) {
@@ -2238,52 +2282,44 @@
     try { await navigator.clipboard.writeText(link); return "copied"; } catch (e) { prompt("Copy this link:", link); return "shown"; }
   }
 
-  // ---- sync extras: device link, invites (Worker admins), deleting the board ----
+  // ---- who can open this board: devices, assistants and Shortcuts, people ----
+  // Each is a short list with Remove, and one + row that adds another.
   function showSyncMore() {
     const on = syncConfigured() && local.synced && !local.otherBoard;
     document.getElementById("syncMore").hidden = !on;
-    document.getElementById("quickAddZone").hidden = !on;
     document.getElementById("agentZone").hidden = !on;
-    document.getElementById("agentNew").hidden = true;
-    agentMsg.textContent = "";
-    quickMsg.textContent = "";
-    document.getElementById("deleteZone").hidden = !(on && local.boardKind === "invited");
-    document.getElementById("deleteBox").hidden = true;
-    deviceMsg.textContent = "";
     document.getElementById("invites").hidden = !(on && local.admin);
-    document.getElementById("advanced").hidden = !on;
+    document.getElementById("stopSync").hidden = !syncConfigured();
+    document.getElementById("deleteBoard").hidden = !(on && local.boardKind === "invited");
+    deviceMsg.textContent = ""; agentMsg.textContent = ""; inviteMsg("");
     if (on && local.admin) loadInvites();
     if (on) { loadDevices(); loadAgents(); }
   }
-  // Says what happened right under the button (a toast is easy to miss in
-  // Settings) and what to do next with the link.
+  // One row in a list: what it is, a smaller line under it, and maybe a button.
+  const listRow = (name, sub, btn) => el("li", { class: "item" },
+    el("span", { class: "item-text" }, el("span", {}, name), sub ? el("small", {}, sub) : null), btn || null);
+  const removeBtn = (label, run) => el("button", { class: "btn", type: "button", onclick: async (ev) => { ev.currentTarget.disabled = true; await run(); } }, label);
+
+  // Add a device: makes a one-time link (POST /devices) and shares or copies it.
+  // The link carries a code that works for a day, not this device's key.
   const deviceBtn = document.getElementById("deviceLink");
-  const deviceMsg = el("p", { class: "msg device-msg", role: "status" });
-  deviceBtn.closest(".row").after(deviceMsg);
-  let deviceTimer;
+  const deviceMsg = document.getElementById("deviceNote");
+  const deviceSay = (text, bad) => { deviceMsg.className = "msg device-msg " + (bad ? "bad" : "ok"); deviceMsg.textContent = text; };
   deviceBtn.addEventListener("click", async () => {
-    // The link carries a one-time code that works for a day, not this device's token.
     let code;
     try { ({ code } = await syncApi("/devices", { method: "POST" })); }
-    catch (e) { deviceMsg.className = "msg device-msg bad"; deviceMsg.textContent = "Couldn't make a link: " + (e instanceof TypeError ? "the sync service can't be reached." : e.message); return; }
+    catch (e) { deviceSay("Couldn't make a link: " + (e instanceof TypeError ? "the sync service can't be reached." : e.message), true); return; }
     const how = await shareLink(appLink({ device: code, sync: workerBase() }), "Now or Later");
     if (!how) return;
     const next = "Open it on your other device within a day and tap Connect. It works once. That device then syncs with " + boardLabel(local.board) + ".";
-    loadDevices();
-    deviceMsg.className = "msg device-msg ok";
-    deviceMsg.textContent = {
+    deviceSay({
       copied: "Link copied. Send it to your other device (AirDrop, Messages or Mail to yourself, or a note). " + next,
       shared: "Link sent. " + next,
       shown: "Copy the link that was shown and send it to your other device. " + next,
-    }[how];
-    if (how === "copied") {
-      deviceBtn.textContent = "Copied ✓";
-      clearTimeout(deviceTimer);
-      deviceTimer = setTimeout(() => { deviceBtn.textContent = "Copy link for another device"; }, 2500);
-    }
+    }[how]);
   });
 
-  // Calls the sync service with this device's token. Used for device links.
+  // Calls the sync service with this device's key.
   async function syncApi(path, opts = {}) {
     const res = await fetch(workerBase() + path, Object.assign({ cache: "no-store" }, opts, {
       headers: { "Authorization": "Bearer " + local.syncToken, "Content-Type": "application/json" },
@@ -2295,41 +2331,46 @@
     if (!res.ok) throw new Error(res.status === 404 ? "This sync service needs an update for device links." : body.error || "The sync service answered " + res.status + ".");
     return body;
   }
-  // Devices connected with a link each have their own token, listed here so a lost
-  // phone can be taken off. Devices set up another way (an invite, or by hand) aren't listed.
+  // Devices connected with a link each have their own key, listed so a lost phone
+  // can be taken off. This device always comes first, however it was set up.
   async function loadDevices() {
-    const ul = document.getElementById("deviceList"), note = document.getElementById("deviceNote");
-    try {
-      const { devices } = await syncApi("/devices");
-      ul.replaceChildren(...devices.map(d => el("li", {},
-        el("span", {}, `${d.label || "A device"}${d.me ? " (this one)" : ""} · added ${shortDate(d.created)}`),
-        el("button", { class: "btn danger", type: "button", onclick: async (ev) => {
-          ev.currentTarget.disabled = true;
-          try { await syncApi("/devices/" + encodeURIComponent(d.id), { method: "DELETE" }); note.textContent = `Removed. That ${d.label || "device"} stops syncing.`; loadDevices(); }
-          catch (e) { note.textContent = "Couldn't remove it: " + e.message; }
-        } }, d.me ? "Sign out" : "Remove"))));
-      note.textContent = devices.length ? "" : "No devices added with a link yet.";
-    } catch (e) { ul.replaceChildren(); note.textContent = e.message === "old service" ? "" : e.message; }
+    const ul = document.getElementById("deviceList");
+    let devices = [];
+    try { ({ devices } = await syncApi("/devices")); }
+    catch (e) { if (e.message !== "old service") deviceSay(e.message, true); }
+    const me = devices.find(d => d.me);
+    const remove = (d) => async () => {
+      try { await syncApi("/devices/" + encodeURIComponent(d.id), { method: "DELETE" }); deviceSay(`Removed. That ${d.label || "device"} stops syncing.`); loadDevices(); }
+      catch (e) { deviceSay("Couldn't remove it: " + e.message, true); loadDevices(); }
+    };
+    ul.replaceChildren(
+      listRow(me && me.label ? `This ${me.label}` : "This device", "You're using it now"),
+      ...devices.filter(d => !d.me).map(d => listRow(d.label || "A device", "Added " + shortDate(d.created), removeBtn("Remove", remove(d)))));
   }
 
-  // Quick add from Shortcuts: the Worker's POST /add needs its address and this board's token.
+  // Quick add from Shortcuts: the Worker's POST /add needs its address and this device's key.
+  const quickDlg = document.getElementById("quickDlg");
   const quickMsg = document.getElementById("quickMsg");
+  document.getElementById("quickOpen").addEventListener("click", () => { quickMsg.textContent = ""; quickDlg.showModal(); });
   async function copyQuick(btn, value, label, what) {
     try { await navigator.clipboard.writeText(value); } catch (e) { prompt(`Copy ${what}:`, value); return; }
     quickMsg.className = "msg device-msg ok";
     quickMsg.textContent = what === "the address"
       ? "Address copied. Paste it as the URL in the Shortcut's Get Contents of URL action."
-      : "Token copied. In the Shortcut, add a header named Authorization with the value Bearer, a space, then the token. Keep it private: it opens your lists.";
+      : "Key copied. In the Shortcut, add a header named Authorization with the value Bearer, a space, then the key.";
     btn.textContent = "Copied ✓";
     setTimeout(() => { btn.textContent = label; }, 2500);
   }
   document.getElementById("quickUrl").addEventListener("click", e => copyQuick(e.currentTarget, workerBase() + "/add", "Copy address", "the address"));
-  document.getElementById("quickToken").addEventListener("click", e => copyQuick(e.currentTarget, local.syncToken, "Copy access token", "the token"));
+  document.getElementById("quickToken").addEventListener("click", e => copyQuick(e.currentTarget, local.syncToken, "Copy key", "the key"));
 
   // AI assistants: each connection is its own key for the Worker's MCP server
-  // (POST /mcp/<key>), read only or read and change. The address is shown once.
+  // (POST /mcp/<key>), read only or read and change. The address is shown once,
+  // in the sheet that made it.
+  const agentDlg = document.getElementById("agentDlg");
   const agentMsg = document.getElementById("agentMsg");
   const agentSay = (text, bad) => { agentMsg.className = "msg device-msg " + (bad ? "bad" : "ok"); agentMsg.textContent = text; };
+  const agentFormSay = (text, bad) => { const m = document.getElementById("agentFormMsg"); m.className = bad ? "msg bad" : "msg"; m.textContent = text; };
   // Other boards on this device that sync with the same Worker can be added to a
   // new connection, so one assistant can work across them and pick a board by name.
   const otherSyncedSlots = () => slotList().filter(x => {
@@ -2352,37 +2393,52 @@
     if (!res.ok) throw new Error(answered(res.status));
   }
   async function loadAgents() {
-    showAgentBoards();
     const ul = document.getElementById("agentList");
     try {
       const { agents } = await syncApi("/agents");
-      ul.replaceChildren(...agents.map(a => el("li", {},
-        el("span", {}, `${a.label} · ${a.scope === "write" ? "can read and change" : "can only read"} · added ${shortDate(a.created)}` +
-          (a.home === false ? " · connected from another board" : a.boards > 1 ? ` · opens ${a.boards} boards` : "")),
-        el("button", { class: "btn danger", type: "button", onclick: async (ev) => {
-          ev.currentTarget.disabled = true;
-          try { await syncApi("/agents/" + encodeURIComponent(a.id), { method: "DELETE" }); agentSay(a.home === false ? `Removed. ${a.label} can't reach this board anymore.` : `Removed. ${a.label} can't reach your lists anymore.`); loadAgents(); }
+      ul.replaceChildren(...agents.map(a => listRow(a.label,
+        [a.scope === "write" ? "Can read and change" : "Can only read",
+          a.home === false ? "connected from another board" : a.boards > 1 ? `${a.boards} boards` : "",
+          "added " + shortDate(a.created)].filter(Boolean).join(" · "),
+        removeBtn("Remove", async () => {
+          try { await syncApi("/agents/" + encodeURIComponent(a.id), { method: "DELETE" }); agentSay(a.home === false ? `Removed. ${a.label} can't reach this board anymore.` : `Removed. ${a.label} can't reach your lists anymore.`); }
           catch (e) { agentSay("Couldn't remove it: " + e.message, true); }
-        } }, "Remove"))));
+          loadAgents();
+        }))));
     } catch (e) { ul.replaceChildren(); agentSay(/404|needs an update/.test(e.message) ? "This sync service needs an update before assistants can connect." : e.message, true); }
   }
+  document.getElementById("agentOpen").addEventListener("click", () => {
+    document.getElementById("agentLabel").value = "";
+    document.querySelector('input[name="agentScope"][value="read"]').checked = true;
+    document.getElementById("agentForm").hidden = false;
+    document.getElementById("agentNew").hidden = true;
+    document.getElementById("agentUrl").value = "";
+    document.getElementById("agentTitle").textContent = "Connect an assistant";
+    agentFormSay(""); agentMsg.textContent = "";
+    showAgentBoards();
+    agentDlg.showModal();
+  });
+  // The address only lives in the sheet: closing it forgets it.
+  agentDlg.addEventListener("close", () => { document.getElementById("agentUrl").value = ""; });
   document.getElementById("agentMake").addEventListener("click", async (ev) => {
     const btn = ev.currentTarget, label = document.getElementById("agentLabel");
-    btn.disabled = true;
+    btn.disabled = true; agentFormSay("Making the address…");
     try {
       const many = slotList().length > 1;
-      const made = await syncApi("/agents", { method: "POST", body: JSON.stringify({ label: label.value.trim(), scope: document.getElementById("agentScope").value,
+      const scope = document.querySelector('input[name="agentScope"]:checked').value;
+      const made = await syncApi("/agents", { method: "POST", body: JSON.stringify({ label: label.value.trim(), scope,
         ...(many ? { board_name: slotName(currentSlot()) } : {}) }) });
-      label.value = "";
       const extra = [...document.querySelectorAll("#agentBoards input[data-slot]:checked")].map(i => slotList().find(x => x.id === i.dataset.slot)).filter(Boolean);
       const missed = [];
       for (const x of extra) { try { await attachAgent(made.token, x); } catch (e) { missed.push(slotName(x)); } }
       document.getElementById("agentUrl").value = made.url;
+      document.getElementById("agentTitle").textContent = `${made.label}'s address`;
+      document.getElementById("agentForm").hidden = true;
       document.getElementById("agentNew").hidden = false;
-      agentMsg.textContent = "";
+      agentFormSay("");
       loadAgents();
       if (extra.length) agentSay(missed.length ? `It can open ${slotName(currentSlot())}${extra.length > missed.length ? " and some of the others" : ""}, but adding ${missed.join(", ")} didn't work. Make a new one to try again.` : `It can open ${[currentSlot(), ...extra].map(x => slotName(x)).join(", ")}. Your assistant picks one by name.`, !!missed.length);
-    } catch (e) { agentSay("Couldn't connect one: " + (e instanceof TypeError ? "the sync service can't be reached." : e.message), true); }
+    } catch (e) { agentFormSay("Couldn't make one: " + (e instanceof TypeError ? "the sync service can't be reached." : e.message), true); }
     finally { btn.disabled = false; }
   });
   document.getElementById("agentCopy").addEventListener("click", async (ev) => {
@@ -2391,12 +2447,9 @@
     btn.textContent = "Copied ✓";
     setTimeout(() => { btn.textContent = "Copy address"; }, 2500);
   });
-  document.getElementById("agentDone").addEventListener("click", () => {
-    document.getElementById("agentNew").hidden = true;
-    document.getElementById("agentUrl").value = "";
-  });
 
-  const inviteMsg = (text, bad) => { const m = document.getElementById("inviteMsg"); m.className = bad ? "msg bad" : "msg"; m.textContent = text; };
+  // People (Worker admins only): invites waiting, and who has joined.
+  const inviteMsg = (text, bad) => { const m = document.getElementById("inviteMsg"); m.className = "msg device-msg " + (bad ? "bad" : "ok"); m.textContent = text; };
   async function adminFetch(path, opts = {}) {
     const res = await fetch(workerBase() + path, Object.assign({ cache: "no-store" }, opts, {
       headers: { "Authorization": "Bearer " + local.syncToken, "Content-Type": "application/json" },
@@ -2410,44 +2463,56 @@
     const ul = document.getElementById("inviteList");
     try {
       const [inv, boards] = await Promise.all([adminFetch("/invites"), adminFetch("/boards")]);
-      ul.replaceChildren(...inv.invites.map(i => el("li", {},
-        el("span", {}, `${i.label || "Invite"} · expires ${shortDate(i.expires)}`),
-        el("button", { class: "btn", type: "button", onclick: async () => {
-          try { await adminFetch("/invites/" + encodeURIComponent(i.code), { method: "DELETE" }); inviteMsg("Invite revoked."); loadInvites(); }
-          catch (e) { inviteMsg(e.message, true); }
-        } }, "Revoke"))));
-      const n = boards.boards.length;
-      inviteMsg(n ? `${n} ${n === 1 ? "person has" : "people have"} joined by invite, out of ${boards.max} this sync service allows.` : "Nobody has joined by invite yet.");
+      // Boards this device keeps (Settings > Boards) are yours, not people.
+      const mine = new Set(slotList().map(x => localOf(x.id).board).filter(Boolean));
+      const joined = boards.boards.filter(b => !mine.has(b.board));
+      ul.replaceChildren(
+        ...inv.invites.map(i => listRow(i.label || "Invite", "Invite waiting · ends " + shortDate(i.expires),
+          removeBtn("Withdraw", async () => {
+            try { await adminFetch("/invites/" + encodeURIComponent(i.code), { method: "DELETE" }); inviteMsg("Invite withdrawn. The link doesn't work anymore."); }
+            catch (e) { inviteMsg(e.message, true); }
+            loadInvites();
+          }))),
+        ...joined.map(b => listRow(b.name || b.invite || "Someone", "Has their own board · joined " + shortDate(b.created))));
+      if (!inv.invites.length && !joined.length) ul.replaceChildren(listRow("Nobody yet", `Your sync service has room for ${boards.max} boards.`));
     } catch (e) { ul.replaceChildren(); inviteMsg(e.message, true); }
   }
-  document.getElementById("inviteMake").addEventListener("click", async () => {
-    const label = document.getElementById("inviteLabel").value.trim();
-    inviteMsg("Creating…");
+  const inviteDlg = document.getElementById("inviteDlg");
+  const inviteDlgSay = (text, bad) => { const m = document.getElementById("inviteDlgMsg"); m.className = bad ? "msg bad" : "msg"; m.textContent = text; };
+  document.getElementById("inviteOpen").addEventListener("click", () => {
+    document.getElementById("inviteLabel").value = ""; inviteDlgSay(""); inviteDlg.showModal();
+  });
+  document.getElementById("inviteMake").addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget, label = document.getElementById("inviteLabel").value.trim();
+    btn.disabled = true; inviteDlgSay("Making the link…");
     try {
       const inv = await adminFetch("/invites", { method: "POST", body: JSON.stringify({ label }) });
       const how = await shareLink(appLink({ join: inv.code, sync: workerBase() }), "Join me on Now or Later");
-      document.getElementById("inviteLabel").value = "";
+      inviteDlg.close();
       await loadInvites();
-      if (how === "copied") inviteMsg(`Invite link copied. It works once, until ${shortDate(inv.expires)}.`);
-    } catch (e) { inviteMsg("Couldn't create an invite: " + e.message, true); }
+      inviteMsg(how === "copied" ? `Invite link copied. Send it to ${label || "them"}. It works once, until ${shortDate(inv.expires)}.`
+        : how ? `Invite sent. It works once, until ${shortDate(inv.expires)}.` : `Invite made. Withdraw it if you didn't send it.`);
+    } catch (e) { inviteDlgSay("Couldn't make an invite: " + e.message, true); }
+    finally { btn.disabled = false; }
   });
 
+  // Delete this board (boards made from an invite only): asks in its own sheet.
+  const deleteDlg = document.getElementById("deleteDlg");
+  const deleteSay = (text, bad) => { const m = document.getElementById("deleteMsg"); m.className = bad ? "msg bad" : "msg"; m.textContent = text; };
   document.getElementById("deleteBoard").addEventListener("click", () => {
     document.getElementById("deleteLocal").checked = false;
-    document.getElementById("deleteWhat").textContent = `This permanently deletes ${boardLabel(local.board)}, its nightly copies and its access token from the sync service. Your other devices stop syncing. It can't be undone. Download a backup first if you might want your lists later.`;
-    document.getElementById("deleteBox").hidden = false;
-    document.getElementById("deleteBox").scrollIntoView({ block: "nearest" });
+    document.getElementById("deleteWhat").textContent = `This permanently deletes ${boardLabel(local.board)}, its nightly copies and its keys from the sync service. Your other devices stop syncing, and connected assistants stop working. It can't be undone. Download a backup first if you might want your lists later.`;
+    deleteSay("");
+    deleteDlg.showModal();
   });
-  document.getElementById("deleteCancel").addEventListener("click", () => { document.getElementById("deleteBox").hidden = true; });
   document.getElementById("deleteGo").addEventListener("click", async () => {
-    const msg = document.getElementById("syncMsg");
-    msg.className = "msg"; msg.textContent = "Deleting…";
+    deleteSay("Deleting…");
     try {
       const res = await fetch(workerBase() + "/data?confirm=delete", { method: "DELETE", headers: { "Authorization": "Bearer " + local.syncToken, "X-Expect-Board": local.board } });
       if (res.status === 403) throw new Error("These lists were set up by whoever runs the sync service. Ask them to delete them.");
       if (!res.ok && res.status !== 410) throw new Error(answered(res.status));
     } catch (e) {
-      msg.className = "msg bad"; msg.textContent = "Couldn't delete: " + (e instanceof TypeError ? "the sync service can't be reached." : e.message);
+      deleteSay("Couldn't delete: " + (e instanceof TypeError ? "the sync service can't be reached." : e.message), true);
       return;
     }
     clearTimeout(pushTimer); pushTimer = null;
@@ -2456,9 +2521,9 @@
     syncError = ""; netDown = false;
     if (document.getElementById("deleteLocal").checked) { board = starterBoard(); local.pristine = true; write(BOARD_KEY, board); }
     write(LOCAL_KEY, local);
-    document.getElementById("syncUrl").value = ""; document.getElementById("syncToken").value = "";
-    msg.textContent = "Your synced board was deleted. Sync is off on this device.";
+    deleteDlg.close();
     showSyncMore(); showStatus(); render();
+    showSyncCard("Your synced board was deleted. Sync is off on this device.");
   });
 
   // ---- opening an invite, device or shared list link ----

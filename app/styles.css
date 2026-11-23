@@ -747,8 +747,6 @@ dialog.settings.confirm p { color: var(--ink); font-size: .95rem; }
 .settings .board-list .board-name small { color: var(--muted); font-size: .8rem; }
 .settings .board-list .board-btns { display: flex; gap: 6px; margin-left: auto; }
 .settings .board-list input[type="text"] { flex: 1; min-width: 10em; }
-.settings .agent-boards { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0 0; padding: 6px 10px 8px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
-.settings .agent-boards legend { font-size: .8rem; color: var(--muted); padding: 0 4px; }
 .settings .join-keep { align-items: flex-start; margin: 4px 0 8px; }
 .settings .join-keep input { margin-top: 3px; }
 /* On a phone the board's name sits under the wordmark, so Settings keeps its place. */
@@ -756,3 +754,46 @@ dialog.settings.confirm p { color: var(--ink); font-size: .95rem; }
   .brand:has(.board-pick:not([hidden])) { flex-direction: column; align-items: flex-start; gap: 0; }
   .board-pick { font-size: .85rem; max-width: 11em; margin: -2px 0 -4px -4px; }
 }
+
+/* ---------- Sync page: status card, then short lists of who can open the board ---------- */
+.settings .sync-head { min-height: 60px; }
+.settings .sync-head strong { font-weight: 700; }
+.settings .sync-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--rule); }
+.settings .sync-dot[data-state="ok"] { background: var(--synced); }
+.settings .sync-dot[data-state="busy"] { background: var(--accent); }
+.settings .sync-dot[data-state="error"], .settings .sync-dot[data-state="offline"], .settings .sync-dot[data-state="pending"] { background: var(--waiting); }
+.settings .item-list { list-style: none; margin: 0; padding: 0; display: contents; }
+.settings .item-list .item + .item, .settings .card > .item-list + .item { border-top: 1px solid var(--line); }
+.settings .card > .item-list:empty + .item { border-top: 0; }
+.settings .card > .item + .item-list > .item:first-child { border-top: 1px solid var(--line); }
+.settings .item-list .item .btn { flex: none; }
+.settings .item-list .item-text > span { overflow-wrap: anywhere; }
+.settings .add-row { color: var(--accent); font-weight: 700; cursor: pointer; }
+.settings .add-row:hover { background: color-mix(in oklab, var(--accent) 7%, transparent); }
+.settings .add-row > span { font-size: 1.15rem; line-height: 1; width: 1em; text-align: center; }
+.settings .add-row:disabled { opacity: .5; cursor: default; }
+.settings .only-you {
+  margin-left: 6px; font-size: .68rem; letter-spacing: .02em; text-transform: none; font-weight: 700;
+  color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); border-radius: 999px; padding: 1px 8px; vertical-align: 1px;
+}
+.settings .group > p.note { margin: 0 4px; }
+.settings .quiet-links { display: flex; flex-direction: column; align-items: flex-start; margin-top: -6px; }
+.settings .quiet-links button {
+  border: 0; background: none; color: var(--accent); font: inherit; font-size: .9rem; padding: 10px 4px; min-height: 44px; cursor: pointer; border-radius: 8px;
+}
+.settings .quiet-links button[hidden] { display: none; }
+.settings .quiet-links button.danger { color: var(--delete); }
+.settings .quiet-links button:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* Sheets the Sync page opens. */
+dialog.settings.sheet .settings-body { display: flex; flex-direction: column; gap: 14px; }
+dialog.settings.sheet .sheet-step { display: flex; flex-direction: column; gap: 14px; }
+dialog.settings.sheet .sheet-step[hidden] { display: none; }
+dialog.settings.sheet .msg:empty { display: none; }
+.settings fieldset.agent-scope, .settings fieldset.agent-boards { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.settings fieldset.agent-boards[hidden] { display: none; }
+.settings fieldset legend { font-size: .9rem; font-weight: 700; color: var(--ink); padding: 0; margin-bottom: 4px; }
+.settings .agent-scope .toggle { align-items: flex-start; font-size: .92rem; color: var(--ink); }
+.settings .agent-scope .toggle input { margin-top: 3px; }
+.settings .agent-scope small { display: block; color: var(--muted); font-size: .8rem; }
+.settings .agent-boards .toggle { font-size: .92rem; color: var(--ink); }
+#agentUrl { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 14px; }

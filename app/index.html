@@ -141,108 +141,60 @@
         </section>
       </div>
 
-      <!-- Sync page: connect, add devices; the rarer things sit under Advanced. -->
+      <!-- Sync page: where things stand, then who can open this board, grouped
+           by kind: your devices, assistants and Shortcuts, people. Adding one
+           opens a small sheet (dialogs below). Rare things are quiet links at the end. -->
       <div class="pane" data-pane="sync" data-title="Sync" hidden>
         <section class="group">
-          <p>Have an invite link? Open it on this phone and sync sets itself up. Adding another of your own devices? Use <strong>Copy link for another device</strong> on one that already syncs. <a href="support.html#sync">How sync works</a></p>
-          <details class="by-hand" id="byHand">
-            <summary>Set up by hand</summary>
-            <p>If whoever runs your sync service gave you an address and an access token, paste them here. Leave both empty to keep your lists on this device only.</p>
-            <div class="card pad">
-              <label class="field">Sync address
-                <input type="url" id="syncUrl" placeholder="https://your-sync.example.workers.dev" autocomplete="off" spellcheck="false">
-              </label>
-              <label class="field">Access token
-                <input type="password" id="syncToken" autocomplete="off" spellcheck="false">
-              </label>
-              <div class="row">
-                <button class="btn primary" type="button" id="saveSync">Save and sync</button>
-              </div>
+          <div class="card">
+            <div class="item sync-head">
+              <span class="sync-dot" id="syncDot" data-state="off" aria-hidden="true"></span>
+              <span class="item-text"><strong id="syncHead">Sync is off</strong><small id="syncMsg" role="status"></small></span>
+              <button class="btn" type="button" id="syncNow" hidden>Sync now</button>
             </div>
-          </details>
-          <div class="msg" id="syncMsg" role="status"></div>
+          </div>
+          <p id="syncIntro">Your lists stay on this device. To sync them, open an invite link on this device, or use <strong>Add a device</strong> on one that already syncs. <a href="support.html#sync">How sync works</a></p>
         </section>
 
         <section class="group sync-more" id="syncMore" hidden aria-labelledby="gDevices">
           <h3 id="gDevices">Your devices</h3>
-          <p>The link connects another phone, tablet or computer to your lists. It works once, within a day, so send it to yourself and open it on the other device.</p>
-          <div class="row start">
-            <button class="btn" type="button" id="deviceLink">Copy link for another device</button>
+          <div class="card">
+            <ul class="item-list" id="deviceList"></ul>
+            <button class="item add-row" type="button" id="deviceLink"><span aria-hidden="true">+</span> Add a device</button>
           </div>
-        </section>
-
-        <details class="group advanced" id="advanced" hidden>
-          <summary>Advanced</summary>
-
-        <section class="group sync-more" aria-labelledby="gDeviceList">
-          <h3 id="gDeviceList">Devices added with a link</h3>
-          <p>Each one has its own key. Remove a phone you've lost or given away, and it stops syncing.</p>
-          <ul class="invite-list" id="deviceList"></ul>
+          <p class="note">Gives you a link to open on the other device. It works once, within a day.</p>
           <p class="msg device-msg ok" id="deviceNote" role="status"></p>
         </section>
 
-        <section class="group sync-more" id="quickAddZone" hidden aria-labelledby="gQuick">
-          <h3 id="gQuick">Quick add from Shortcuts</h3>
-          <p>An iPhone, iPad or Mac Shortcut can put a todo straight into Now without opening the app, from the share sheet, Siri, the Action button or Back Tap. It needs these two things. <a href="support.html#quick-add">How to set it up</a>.</p>
-          <div class="row start">
-            <button class="btn" type="button" id="quickUrl">Copy address</button>
-            <button class="btn" type="button" id="quickToken">Copy access token</button>
-          </div>
-          <p class="msg device-msg" id="quickMsg" role="status"></p>
-        </section>
-
         <section class="group sync-more" id="agentZone" hidden aria-labelledby="gAgents">
-          <h3 id="gAgents">AI assistants</h3>
-          <p>Connect an AI assistant like Claude so it can read your lists, and if you let it, add, check off and move todos for you. Each connection gets its own private address. Remove it and it stops working. <a href="support.html#assistants">How to set it up</a></p>
-          <div class="row start invite-new">
-            <input type="text" id="agentLabel" placeholder="Which assistant (optional)" maxlength="40" autocomplete="off" aria-label="Which assistant this is for">
-            <select id="agentScope" aria-label="What it can do">
-              <option value="read">Can only read</option>
-              <option value="write">Can read and change</option>
-            </select>
-            <button class="btn" type="button" id="agentMake">Connect an assistant</button>
-          </div>
-          <fieldset class="agent-boards" id="agentBoards" hidden>
-            <legend>Boards it can open</legend>
-          </fieldset>
-          <div class="restore-box" id="agentNew" hidden>
-            <p>Paste this address into your assistant's connector settings. It's only shown now, and anyone who has it can reach your lists, so keep it private. Setting it up with an AI agent? Give it the address and <a href="agents.md" target="_blank" rel="noopener">now-or-later.app/agents.md</a>.</p>
-            <input type="text" id="agentUrl" readonly aria-label="Address for the assistant" spellcheck="false">
-            <div class="row start">
-              <button class="btn primary" type="button" id="agentCopy">Copy address</button>
-              <button class="btn" type="button" id="agentDone">Done</button>
+          <h3 id="gAgents">Assistants and Shortcuts</h3>
+          <div class="card">
+            <ul class="item-list" id="agentList"></ul>
+            <div class="item" id="quickRow">
+              <span class="item-text">Quick add Shortcut <small>Puts a todo straight into Now from Siri or the share sheet</small></span>
+              <button class="btn" type="button" id="quickOpen">Set up</button>
             </div>
+            <button class="item add-row" type="button" id="agentOpen"><span aria-hidden="true">+</span> Connect an assistant</button>
           </div>
-          <ul class="invite-list" id="agentList"></ul>
+          <p class="note">An assistant like Claude gets a private address of its own. Remove it and it stops working. <a href="support.html#assistants">How it works</a></p>
           <p class="msg device-msg" id="agentMsg" role="status"></p>
         </section>
 
-        <section class="group invites" id="invites" hidden aria-labelledby="gInvites">
-          <h3 id="gInvites">Invite people</h3>
-          <p>An invite link gives someone their own synced lists on this sync service. It works once and expires after 14 days. The note is only for you, to remember who it's for.</p>
-          <div class="row start invite-new">
-            <input type="text" id="inviteLabel" placeholder="Who it's for (optional)" maxlength="40" autocomplete="off" aria-label="Who the invite is for">
-            <button class="btn" type="button" id="inviteMake">Create invite link</button>
+        <section class="group sync-more" id="invites" hidden aria-labelledby="gInvites">
+          <h3 id="gInvites">People <span class="only-you">Only you see this</span></h3>
+          <div class="card">
+            <ul class="item-list" id="inviteList"></ul>
+            <button class="item add-row" type="button" id="inviteOpen"><span aria-hidden="true">+</span> Invite someone</button>
           </div>
-          <ul class="invite-list" id="inviteList"></ul>
-          <div class="msg" id="inviteMsg" role="status"></div>
+          <p class="note">Each person gets their own lists. To work on one list together, use Share in that list's ••• menu.</p>
+          <p class="msg device-msg" id="inviteMsg" role="status"></p>
         </section>
 
-        <section class="group danger-zone" id="deleteZone" hidden aria-labelledby="gDelete">
-          <h3 id="gDelete">Delete your board</h3>
-          <div class="row start">
-            <button class="btn danger" type="button" id="deleteBoard">Delete synced board…</button>
-          </div>
-          <div class="restore-box" id="deleteBox" hidden>
-            <p id="deleteWhat">This permanently deletes your board, its nightly copies and its access token from the sync service. Your other devices stop syncing. It can't be undone.</p>
-            <label class="toggle"><input type="checkbox" id="deleteLocal"> Also erase the lists on this device</label>
-            <div class="row">
-              <button class="btn" type="button" id="deleteCancel">Cancel</button>
-              <button class="btn primary danger" type="button" id="deleteGo">Delete board</button>
-            </div>
-          </div>
-        </section>
-        </details>
+        <nav class="quiet-links" aria-label="Less common">
+          <button type="button" id="byHandOpen">Set up sync by hand…</button>
+          <button type="button" id="stopSync" hidden>Stop syncing on this device…</button>
+          <button type="button" class="danger" id="deleteBoard" hidden>Delete this board…</button>
+        </nav>
       </div>
 
       <!-- Boards page: the boards this device keeps, each with its own sync. -->
@@ -314,6 +266,134 @@
         <div class="row">
           <button class="btn" value="cancel" id="joinNo" formnovalidate>Not now</button>
           <button class="btn primary" type="button" id="joinGo">Join</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Sheets the Sync page opens, one thing each. -->
+  <dialog class="settings join sheet" id="agentDlg" aria-labelledby="agentTitle">
+    <form method="dialog">
+      <div class="settings-head">
+        <h2 id="agentTitle">Connect an assistant</h2>
+        <button class="close-x" value="cancel" formnovalidate aria-label="Close" title="Close">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <div class="sheet-step" id="agentForm">
+          <label class="field">Name
+            <input type="text" id="agentLabel" placeholder="For example, Claude" maxlength="40" autocomplete="off">
+          </label>
+          <fieldset class="agent-scope">
+            <legend>What it can do</legend>
+            <label class="toggle"><input type="radio" name="agentScope" value="read" checked> <span>Only read <small>It can see your lists, nothing more.</small></span></label>
+            <label class="toggle"><input type="radio" name="agentScope" value="write"> <span>Read and change <small>It can also add, check off, move and pencil in todos.</small></span></label>
+          </fieldset>
+          <fieldset class="agent-boards" id="agentBoards" hidden>
+            <legend>Boards it can open</legend>
+          </fieldset>
+          <div class="msg" id="agentFormMsg" role="status"></div>
+          <div class="row">
+            <button class="btn" value="cancel" formnovalidate>Cancel</button>
+            <button class="btn primary" type="button" id="agentMake">Make address</button>
+          </div>
+        </div>
+        <div class="sheet-step" id="agentNew" hidden>
+          <p id="agentNewWhat">Paste this address into your assistant's connector settings. It's shown only now, and anyone who has it can reach your lists, so keep it private.</p>
+          <input type="text" id="agentUrl" readonly aria-label="Address for the assistant" spellcheck="false">
+          <p class="note">Setting it up with an AI agent? Give it the address and <a href="agents.md" target="_blank" rel="noopener">now-or-later.app/agents.md</a>.</p>
+          <div class="row">
+            <button class="btn" value="done" id="agentDone" formnovalidate>Done</button>
+            <button class="btn primary" type="button" id="agentCopy">Copy address</button>
+          </div>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="settings join sheet" id="quickDlg" aria-labelledby="quickTitle">
+    <form method="dialog">
+      <div class="settings-head">
+        <h2 id="quickTitle">Quick add Shortcut</h2>
+        <button class="close-x" value="cancel" formnovalidate aria-label="Close" title="Close">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <p>An iPhone, iPad or Mac Shortcut can put a todo straight into Now without opening the app, from the share sheet, Siri, the Action button or Back Tap. The Shortcut needs an address and this device's key. <a href="support.html#quick-add">Step-by-step setup</a></p>
+        <div class="row start">
+          <button class="btn" type="button" id="quickUrl">Copy address</button>
+          <button class="btn" type="button" id="quickToken">Copy key</button>
+        </div>
+        <p class="msg device-msg" id="quickMsg" role="status"></p>
+        <p class="note">Keep the key private: it opens your lists. If you remove this device, the Shortcut stops working too.</p>
+        <div class="row">
+          <button class="btn" value="done" formnovalidate>Done</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="settings join sheet" id="inviteDlg" aria-labelledby="inviteTitle">
+    <form method="dialog">
+      <div class="settings-head">
+        <h2 id="inviteTitle">Invite someone</h2>
+        <button class="close-x" value="cancel" formnovalidate aria-label="Close" title="Close">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <p>An invite link gives someone their own synced lists on your sync service. It works once and expires after 14 days.</p>
+        <label class="field">Who it's for (optional, only you see it)
+          <input type="text" id="inviteLabel" placeholder="For example, Mom" maxlength="40" autocomplete="off">
+        </label>
+        <div class="msg" id="inviteDlgMsg" role="status"></div>
+        <div class="row">
+          <button class="btn" value="cancel" formnovalidate>Cancel</button>
+          <button class="btn primary" type="button" id="inviteMake">Make invite link</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="settings join sheet" id="handDlg" aria-labelledby="handTitle">
+    <form method="dialog">
+      <div class="settings-head">
+        <h2 id="handTitle">Set up sync by hand</h2>
+        <button class="close-x" value="cancel" formnovalidate aria-label="Close" title="Close">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <p>Only needed if whoever runs your sync service gave you an address and a key. An invite or device link does this for you.</p>
+        <label class="field">Sync address
+          <input type="url" id="syncUrl" placeholder="https://your-sync.example.workers.dev" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="field">Key
+          <input type="password" id="syncToken" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="msg" id="handMsg" role="status"></div>
+        <div class="row">
+          <button class="btn" value="cancel" formnovalidate>Cancel</button>
+          <button class="btn primary" type="button" id="saveSync">Save and sync</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="settings join sheet" id="deleteDlg" aria-labelledby="deleteTitle">
+    <form method="dialog">
+      <div class="settings-head">
+        <h2 id="deleteTitle">Delete this board?</h2>
+      </div>
+      <div class="settings-body">
+        <p id="deleteWhat">This permanently deletes your board, its nightly copies and its keys from the sync service. Your other devices stop syncing. It can't be undone.</p>
+        <label class="toggle"><input type="checkbox" id="deleteLocal"> Also erase the lists on this device</label>
+        <div class="msg" id="deleteMsg" role="status"></div>
+        <div class="row">
+          <button class="btn" value="cancel" formnovalidate id="deleteCancel">Cancel</button>
+          <button class="btn primary danger" type="button" id="deleteGo">Delete board</button>
         </div>
       </div>
     </form>

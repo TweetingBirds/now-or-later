@@ -281,6 +281,18 @@ test("one assistant can open several boards and pick one by name", async () => {
   ({ body } = await rpc(e, agent, "tools/list"));
   assert.ok(!("board" in body.result.tools[0].inputSchema.properties));
 
+  // Editing later, without the key: its id plus the home board's token.
+  assert.equal((await call(e, "POST", "/agents/attach", { token: quips, body: { id: agent.id, home_token: quips } })).status, 404);
+  assert.equal((await call(e, "POST", "/agents/attach", { token: quips, body: { id: agent.id, home_token: "nt_" + "x".repeat(43) } })).status, 404);
+  assert.equal((await call(e, "POST", "/agents/attach", { token: quips, body: { id: agent.id } })).status, 404);
+  const ed = await call(e, "POST", "/agents/attach", { token: quips, body: { id: agent.id, home_token: NATE, name: "quips" } });
+  assert.equal((await ed.json()).boards, 2);
+  ({ body } = await rpc(e, agent, "tools/list"));
+  assert.deepEqual(body.result.tools[0].inputSchema.properties.board.enum, ["Home", "quips"]);
+  const fromHome = (await (await call(e, "GET", "/agents", { token: NATE })).json()).agents;
+  assert.deepEqual(fromHome[0].also, [e.NOW_AND_THEN.m.get("atok:" + agent.id).meta.also[0]]);
+  assert.equal((await (await call(e, "DELETE", "/agents/" + agent.id, { token: quips })).json()).detached, true);
+
   // Deleting an added board takes it off the key; the key keeps working.
   await call(e, "POST", "/agents/attach", { token: quips, body: { key: agent.token } });
   assert.equal((await call(e, "DELETE", "/data?confirm=delete", { token: quips })).status, 200);

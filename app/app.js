@@ -9,7 +9,7 @@
 
   // APP_VERSION is bumped by hand for notable releases. The BUILD_* values are
   // stamped by the GitHub Pages workflow on every deploy (left as-is locally).
-  const APP_VERSION = "1.30.0";
+  const APP_VERSION = "1.31.0";
   const BUILD_NUMBER = "__BUILD_NUMBER__";
   const BUILD_SHA = "__BUILD_SHA__";
   const BUILD_DATE = "__BUILD_DATE__";
@@ -2385,26 +2385,77 @@
       el("label", { class: "toggle" }, el("input", { type: "checkbox", checked: true, disabled: true }), " " + slotName(currentSlot())),
       ...others.map(x => el("label", { class: "toggle" }, el("input", { type: "checkbox", "data-slot": x.id }), " " + slotName(x))));
   }
+  // Adds board x to a key: with the key itself right after making it, or later with
+  // the key's id and this board's token (the board that made it), so the address
+  // the assistant already has keeps working.
   async function attachAgent(key, x) {
     const l = localOf(x.id);
     const res = await fetch(l.syncUrl.replace(/\/+$/, "") + "/agents/attach", { method: "POST", cache: "no-store",
       headers: { "Authorization": "Bearer " + l.syncToken, "Content-Type": "application/json" },
-      body: JSON.stringify({ key, name: slotName(x) }) });
+      body: JSON.stringify(typeof key === "string" ? { key, name: slotName(x) } : { id: key.id, home_token: local.syncToken, name: slotName(x) }) });
     if (!res.ok) throw new Error(answered(res.status));
   }
+  // Takes board x off a key another board made, with x's own token.
+  async function detachAgentFrom(id, x) {
+    const l = localOf(x.id);
+    const res = await fetch(l.syncUrl.replace(/\/+$/, "") + "/agents/" + encodeURIComponent(id), { method: "DELETE", cache: "no-store",
+      headers: { "Authorization": "Bearer " + l.syncToken } });
+    if (!res.ok && res.status !== 404) throw new Error(answered(res.status));
+  }
+  // Edit boards: the sheet's third step, for a key this board made.
+  let editing = null;
+  function openAgentEdit(a) {
+    editing = a;
+    const has = new Set(a.also || []), others = otherSyncedSlots();
+    const elsewhere = (a.also || []).filter(b => !others.some(x => localOf(x.id).board === b)).length;
+    document.getElementById("agentEditBoards").replaceChildren(el("legend", {}, "Boards it can open"),
+      el("label", { class: "toggle" }, el("input", { type: "checkbox", checked: true, disabled: true }), " " + slotName(currentSlot())),
+      ...others.map(x => el("label", { class: "toggle" }, el("input", { type: "checkbox", "data-slot": x.id, checked: has.has(localOf(x.id).board) }), " " + slotName(x))),
+      ...(elsewhere ? [el("small", { class: "note" }, `Plus ${elsewhere === 1 ? "a board" : elsewhere + " boards"} not on this device, left as they are.`)] : []));
+    document.getElementById("agentForm").hidden = true;
+    document.getElementById("agentNew").hidden = true;
+    document.getElementById("agentEdit").hidden = false;
+    document.getElementById("agentTitle").textContent = `Boards ${a.label} can open`;
+    agentEditSay(""); agentMsg.textContent = "";
+    agentDlg.showModal();
+  }
+  const agentEditSay = (text, bad) => { const m = document.getElementById("agentEditMsg"); m.className = bad ? "msg bad" : "msg"; m.textContent = text; };
+  document.getElementById("agentSave").addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget, a = editing;
+    if (!a) return;
+    const has = new Set(a.also || []), missed = [];
+    btn.disabled = true; agentEditSay("Saving…");
+    for (const i of document.querySelectorAll("#agentEditBoards input[data-slot]")) {
+      const x = slotList().find(s => s.id === i.dataset.slot);
+      if (!x) continue;
+      const on = has.has(localOf(x.id).board);
+      try {
+        if (i.checked && !on) await attachAgent({ id: a.id }, x);
+        else if (!i.checked && on) await detachAgentFrom(a.id, x);
+      } catch (e) { missed.push(slotName(x)); }
+    }
+    btn.disabled = false;
+    loadAgents();
+    if (missed.length) { agentEditSay(`Couldn't change ${missed.join(", ")}. Try again in a moment.`, true); return; }
+    agentDlg.close();
+    agentSay(`Saved. ${a.label}'s address stays the same.`);
+  });
   async function loadAgents() {
     const ul = document.getElementById("agentList");
     try {
       const { agents } = await syncApi("/agents");
+      const canEdit = otherSyncedSlots().length > 0;
       ul.replaceChildren(...agents.map(a => listRow(a.label,
         [a.scope === "write" ? "Can read and change" : "Can only read",
           a.home === false ? "connected from another board" : a.boards > 1 ? `${a.boards} boards` : "",
           "added " + shortDate(a.created)].filter(Boolean).join(" · "),
-        removeBtn("Remove", async () => {
-          try { await syncApi("/agents/" + encodeURIComponent(a.id), { method: "DELETE" }); agentSay(a.home === false ? `Removed. ${a.label} can't reach this board anymore.` : `Removed. ${a.label} can't reach your lists anymore.`); }
-          catch (e) { agentSay("Couldn't remove it: " + e.message, true); }
-          loadAgents();
-        }))));
+        el("span", { class: "item-btns" },
+          canEdit && a.home !== false ? el("button", { class: "btn", type: "button", onclick: () => openAgentEdit(a) }, "Boards") : null,
+          removeBtn("Remove", async () => {
+            try { await syncApi("/agents/" + encodeURIComponent(a.id), { method: "DELETE" }); agentSay(a.home === false ? `Removed. ${a.label} can't reach this board anymore.` : `Removed. ${a.label} can't reach your lists anymore.`); }
+            catch (e) { agentSay("Couldn't remove it: " + e.message, true); }
+            loadAgents();
+          })))));
     } catch (e) { ul.replaceChildren(); agentSay(/404|needs an update/.test(e.message) ? "This sync service needs an update before assistants can connect." : e.message, true); }
   }
   document.getElementById("agentOpen").addEventListener("click", () => {
@@ -2412,6 +2463,7 @@
     document.querySelector('input[name="agentScope"][value="read"]').checked = true;
     document.getElementById("agentForm").hidden = false;
     document.getElementById("agentNew").hidden = true;
+    document.getElementById("agentEdit").hidden = true;
     document.getElementById("agentUrl").value = "";
     document.getElementById("agentTitle").textContent = "Connect an assistant";
     agentFormSay(""); agentMsg.textContent = "";
@@ -2437,7 +2489,7 @@
       document.getElementById("agentNew").hidden = false;
       agentFormSay("");
       loadAgents();
-      if (extra.length) agentSay(missed.length ? `It can open ${slotName(currentSlot())}${extra.length > missed.length ? " and some of the others" : ""}, but adding ${missed.join(", ")} didn't work. Make a new one to try again.` : `It can open ${[currentSlot(), ...extra].map(x => slotName(x)).join(", ")}. Your assistant picks one by name.`, !!missed.length);
+      if (extra.length) agentSay(missed.length ? `It can open ${slotName(currentSlot())}${extra.length > missed.length ? " and some of the others" : ""}, but adding ${missed.join(", ")} didn't work. Tap Boards on it to try again.` : `It can open ${[currentSlot(), ...extra].map(x => slotName(x)).join(", ")}. Your assistant picks one by name.`, !!missed.length);
     } catch (e) { agentFormSay("Couldn't make one: " + (e instanceof TypeError ? "the sync service can't be reached." : e.message), true); }
     finally { btn.disabled = false; }
   });

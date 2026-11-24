@@ -791,6 +791,7 @@ dialog.settings.sheet .sheet-step[hidden] { display: none; }
 dialog.settings.sheet .msg:empty { display: none; }
 .settings fieldset.agent-scope, .settings fieldset.agent-boards { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .settings fieldset.agent-boards[hidden] { display: none; }
+.settings .item-btns { display: flex; gap: 6px; flex-shrink: 0; }
 .settings fieldset legend { font-size: .9rem; font-weight: 700; color: var(--ink); padding: 0; margin-bottom: 4px; }
 .settings .agent-scope .toggle { align-items: flex-start; font-size: .92rem; color: var(--ink); }
 .settings .agent-scope .toggle input { margin-top: 3px; }

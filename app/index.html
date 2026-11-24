@@ -299,6 +299,17 @@
             <button class="btn primary" type="button" id="agentMake">Make address</button>
           </div>
         </div>
+        <div class="sheet-step" id="agentEdit" hidden>
+          <p>Pick the boards it can open. Its address stays the same, so there's nothing to change in your assistant.</p>
+          <fieldset class="agent-boards" id="agentEditBoards">
+            <legend>Boards it can open</legend>
+          </fieldset>
+          <div class="msg" id="agentEditMsg" role="status"></div>
+          <div class="row">
+            <button class="btn" value="cancel" formnovalidate>Cancel</button>
+            <button class="btn primary" type="button" id="agentSave">Save</button>
+          </div>
+        </div>
         <div class="sheet-step" id="agentNew" hidden>
           <p id="agentNewWhat">Paste this address into your assistant's connector settings. It's shown only now, and anyone who has it can reach your lists, so keep it private.</p>
           <input type="text" id="agentUrl" readonly aria-label="Address for the assistant" spellcheck="false">

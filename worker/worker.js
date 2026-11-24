@@ -55,7 +55,7 @@
 // work nowhere else. POST /agents { label, scope: "read" | "write" } makes one
 // (the key is shown once), GET /agents lists them and DELETE /agents/<id> removes
 // one. Deleting a board removes them too. A key can open more boards than the one
-// that made it: POST /agents/attach { key, name }, sent with another board's own
+// that made it: POST /agents/attach { key, name } (or { id, home_token, name }), sent with another board's own
 // token, adds that board (for a device that keeps several boards, one per app or
 // area), and the MCP tools then take a board name. That board's DELETE
 // /agents/<id> takes it off the key again.
@@ -324,7 +324,9 @@ async function agentsOf(env, board) {
   return (await listKeys(env, "atok:"))
     .filter((k) => k.metadata && (k.metadata.board === board || (Array.isArray(k.metadata.also) && k.metadata.also.includes(board))))
     .map((k) => ({ id: k.name.slice(5), label: k.metadata.label || "", scope: k.metadata.scope === "write" ? "write" : "read", created: k.metadata.created || "",
-      home: k.metadata.board === board, boards: 1 + (Array.isArray(k.metadata.also) ? k.metadata.also.length : 0) }));
+      home: k.metadata.board === board, boards: 1 + (Array.isArray(k.metadata.also) ? k.metadata.also.length : 0),
+      // The board that made it sees which others it opens, to edit them in place.
+      ...(k.metadata.board === board && Array.isArray(k.metadata.also) ? { also: k.metadata.also } : {}) }));
 }
 // KV metadata is capped at 1 KB, so it carries the extra boards' ids only.
 const agentMeta = (rec) => ({ board: rec.board, name: rec.name, kind: rec.kind, label: rec.label, scope: rec.scope, created: rec.created,
@@ -910,15 +912,26 @@ async function agents(request, env, who, url) {
     const base = url.origin + url.pathname.replace(/\/agents\/?$/, "");
     return json({ id: hash, token, url: base + "/mcp/" + token, label: rec.label, scope: rec.scope, created: rec.created }, 200, hdrs);
   }
-  // Adds this board to a key another board made. Knowing the key itself (shown once,
-  // to the device that made it) and this board's token are both needed.
+  // Adds this board to a key another board made. This board's token is needed, plus
+  // either the key itself (shown once, to the device that made it) or, to add a board
+  // to an existing key later without changing it, the key's id and the token of the
+  // board that made it ({ id, home_token }).
   if (m === "POST" && id === "attach") {
     const { value, error } = await readJson(request, 2000);
     if (error) return error;
-    const key = String(value.key || "").trim();
-    if (!AGENT_TOKEN.test(key)) return json({ error: "not found" }, 404, hdrs);
-    const hash = await hashToken(key);
-    const rec = await env.NOW_AND_THEN.get("atok:" + hash, "json");
+    let hash, rec;
+    if (value.key) {
+      const key = String(value.key).trim();
+      if (!AGENT_TOKEN.test(key)) return json({ error: "not found" }, 404, hdrs);
+      hash = await hashToken(key);
+      rec = await env.NOW_AND_THEN.get("atok:" + hash, "json");
+    } else {
+      hash = String(value.id || "");
+      if (!DEVICE_ID.test(hash) || typeof value.home_token !== "string") return json({ error: "not found" }, 404, hdrs);
+      rec = await env.NOW_AND_THEN.get("atok:" + hash, "json");
+      const home = await whoIs(new Request(url.origin, { headers: { Authorization: "Bearer " + value.home_token } }), env, { fresh: true });
+      if (!rec || !home || home.gone || home.clash || home.board !== rec.board) return json({ error: "not found" }, 404, hdrs);
+    }
     if (!rec || !rec.board) return json({ error: "not found" }, 404, hdrs);
     const label = cleanName(value.name);
     if (rec.board === who.board) {
